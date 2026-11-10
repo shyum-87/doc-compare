@@ -24,7 +24,7 @@ Compliance Validator의 단계 순서(§3.4): Applicability 확인 → 근거 �
 
 계획된 모듈(`app/` 하위): `parsing/`, `requirements/`, `validation/`, `llm/`, `models/`(Pydantic), `reporting/`, `storage/`, `api/`(FastAPI), `ui/`(Streamlit). 파싱 / 요구사항 생성 / 검증 / UI / LLM 게이트웨이는 서로 독립 모듈로 유지한다.
 
-PoC v0.1 스택: Python 3.10, 기존 VLM 기반 파서(외부 프로그램. 파일 → JSON → Markdown. 이 저장소에는 그 출력을 구조화 모델로 바꾸는 어댑터만 둔다), 사내 OpenAI 호환 LLM(OpenAI SDK 또는 LangChain ChatOpenAI), Python 함수형 파이프라인(LangGraph는 이후), Streamlit, FastAPI. Vector DB와 자율 Multi-Agent는 PoC에서 도입하지 않는다. 근거 검색은 초기에 직접 대조로 하고, 문서 1쌍으로 파싱·추출·매핑·판정을 검증한 뒤 RAG를 도입한다.
+PoC v0.1 스택: Python 3.10, 입력은 외부 변환 파이프라인이 만든 `rag_ko.md`(원본 → 파서 JSON → LLM 재구성 Markdown → 한국어 번역. 형식은 [docs/RAG_KO_FORMAT.md](docs/RAG_KO_FORMAT.md)). 이 저장소에는 그 파일을 구조화 모델로 읽는 어댑터만 두고 파서는 만들지 않는다. 사내 OpenAI 호환 LLM(OpenAI SDK 또는 LangChain ChatOpenAI), Python 함수형 파이프라인(LangGraph는 이후), Streamlit, FastAPI. Vector DB와 자율 Multi-Agent는 PoC에서 도입하지 않는다. 근거 검색은 초기에 직접 대조로 하고, 문서 1쌍으로 파싱·추출·매핑·판정을 검증한 뒤 RAG를 도입한다.
 
 평가는 `tests/evaluation/`의 판정 골든셋과 §10의 KPI로 한다. 단일 '정확도'로 판단하지 않으며, Critical 항목의 False Pass(실제 FAIL/MISSING을 PASS로 처리)를 가장 보수적으로 본다.
 

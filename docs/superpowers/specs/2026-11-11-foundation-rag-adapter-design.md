@@ -1,7 +1,7 @@
 # 단위 ① 설계: 기반 + rag_ko.md 어댑터
 
 - 작성일: 2026-11-11
-- 상태: 사용자 검토 대기
+- 상태: 승인됨 (2026-11-11). 구현 계획은 [2026-11-11-foundation-rag-adapter.md](../plans/2026-11-11-foundation-rag-adapter.md)
 - 관련 문서: [DECISIONS.md](../../DECISIONS.md), [RAG_KO_FORMAT.md](../../RAG_KO_FORMAT.md), [PRIOR_ART.md](../../PRIOR_ART.md), [SYSTEM_DESIGN.md](../../SYSTEM_DESIGN.md)
 
 ## 1. 목적과 위치
@@ -190,7 +190,7 @@ Pydantic 모델이며 만들어진 뒤에는 바꿀 수 없다(frozen). 번역�
 - **음수 부호:** 숫자 바로 앞의 `-`이며, 그 앞 글자가 영문자나 숫자가 아닐 때다. `WI-BK-204`와 `2026-11-11`의 `-`는 음수 부호가 아니다.
 - **단위의 경계:** 단위 뒤에 라틴 문자(성조 부호가 붙은 글자 포함)가 이어지면 단위로 보지 않는다. `30 min`의 `m`은 단위가 아니다. 한글이나 한자가 이어지는 것은 허용한다(`180℃에서`, `5mm의`).
 - **단위 표:** 코드 한 곳에 둔다. 처음 넣는 값은 `℃`, `°C`, `℉`, `%`, `μm`, `mm`, `cm`, `m`, `mg`, `g`, `kg`, `mL`, `L`, `Pa`, `kPa`, `MPa`, `rpm`, `ppm`이다. 실제 문서에서 더 나오면 추가한다.
-- **정규화:** 비교할 때만 유니코드 NFKC로 정규화한다(전각 → 반각, `℃` → `°C`). 저장된 원문은 바꾸지 않는다.
+- **정규화:** 비교할 때만 유니코드 NFKC로 정규화한다(전각 → 반각, `℃` → `°C`). NFKC가 바꾸지 않는 두 글자는 따로 접는다: 빼기 기호 U+2212(−) → `-`, 물결표 U+301C(〜) → `~`. 저장된 원문은 바꾸지 않는다.
 
 ### 6.3 숫자 표기
 
@@ -294,6 +294,7 @@ python -m app.parsing <주 파일> --doc-id <ID> --version <버전>
 
 ```
 pyproject.toml
+constraints.txt              테스트를 돌려 본 정확한 버전
 .gitignore
 .gitattributes               tests/fixtures/** 의 줄 끝을 LF로 고정한다
 config/example.env           자리표시자만 둔다
@@ -312,10 +313,12 @@ app/
 tests/
   fixtures/rag_ko/           한국어 샘플
   fixtures/rag/              가상 원문(영어, 베트남어, 중국어)
+  conftest.py                샘플 파일 경로
+  models/                    모델 테스트
   parsing/                   테스트
 ```
 
-의존성은 Pydantic뿐이고, 개발용으로 pytest와 ruff를 쓴다. Python 3.10에서 동작해야 한다(D-003). 도입할 버전이 Python 3.10을 지원하는지와 라이선스를 확인하고 버전을 고정한다(D-009).
+의존성은 Pydantic뿐이고, 개발용으로 pytest와 ruff를 쓴다. Python 3.10에서 동작해야 한다(D-003). 도입할 버전이 Python 3.10을 지원하는지와 라이선스를 확인하고 버전을 고정한다(D-009). `pyproject.toml`에는 범위를 두고, 정확한 버전은 `constraints.txt`에 둔다. 확인한 내용은 구현 계획의 Task 1에 있다.
 
 ## 10. 테스트
 
@@ -344,3 +347,5 @@ tests/
 - 이미지가 있는 구간의 판정을 어떻게 다룰지. 단위 ④에서 정한다.
 - 한계 표현의 언어별 대응표. 실제 파일 쌍을 본 뒤에 만든다.
 - 일본어 문서가 여전히 대상에 포함되는지.
+- 원문에만 있는 요소 때문에 생긴 `SEGMENT_UNALIGNED`는 번역본 쪽 요소가 비어 있어, 번역본에서 막을 요소가 없다. 이 경우를 판정에서 어떻게 다룰지. 단위 ④에서 정한다.
+- Python 3.10에서만 설치되는 `exceptiongroup`과 `tomli`의 버전은 확인하지 못했다(사외 PC에 Python 3.10이 없다). 사내 확인에서 본다.

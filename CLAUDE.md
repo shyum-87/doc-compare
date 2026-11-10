@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 목표: DOCX/PDF 문서의 양식·필수 항목 검증(Use Case A)과 한국 기준 SOP ↔ 일본 SOP 비교(Use Case B).
 
-단위별 설계(D-001의 6개 단위)는 `docs/superpowers/specs/`에 있다. 단위 ①은 [2026-11-11-foundation-rag-adapter-design.md](docs/superpowers/specs/2026-11-11-foundation-rag-adapter-design.md)다.
+단위별 설계(D-001의 6개 단위)는 `docs/superpowers/specs/`에 있다. 단위 ①은 [2026-11-11-foundation-rag-adapter-design.md](docs/superpowers/specs/2026-11-11-foundation-rag-adapter-design.md)다. 단위별 구현 계획은 `docs/superpowers/plans/`에 있다. 단위 ①은 [2026-11-11-foundation-rag-adapter.md](docs/superpowers/plans/2026-11-11-foundation-rag-adapter.md)다.
 
 설계 문서 이후 확정된 결정은 [docs/DECISIONS.md](docs/DECISIONS.md)에 있으며, 설계 문서와 다르면 그쪽이 우선한다. 새 결정이 나오면 거기에 추가한다.
 

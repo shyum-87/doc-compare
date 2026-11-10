@@ -35,3 +35,6 @@ htmlcov/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 명령줄 결과(JSON에 문서 본문이 들어간다)
+out/

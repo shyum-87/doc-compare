@@ -1,0 +1,17 @@
+# Exact versions the test suite was run with (spec section 9: versions are pinned).
+# Use:  python -m pip install -e ".[dev]" -c constraints.txt
+# Every version below supports Python 3.10 and has a permissive licence (see the plan, Task 1).
+# On Python 3.10 pytest also installs exceptiongroup and tomli. They are not listed because
+# they were not installed where these versions were checked (Python 3.14).
+annotated-types==0.8.0
+colorama==0.4.6
+iniconfig==2.3.1
+packaging==26.3
+pluggy==1.7.0
+pydantic==2.13.0
+pydantic-core==2.46.0
+pygments==2.21.0
+pytest==9.2.0
+ruff==0.17.4
+typing-extensions==4.16.0
+typing-inspection==0.4.5

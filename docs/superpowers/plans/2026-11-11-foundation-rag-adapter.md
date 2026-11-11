@@ -80,7 +80,7 @@
 - 페이지 번호와 조항 번호는 ASCII 숫자(`0`~`9`)만 인정한다. 페이지 번호는 6자리까지다. 조항 번호는 `**`를 벗긴 제목에서 읽는다(`## **3. 제조**`의 번호는 `3`).
 - 규칙 8(미분류) 중 코드 펜스(` ``` `, `~~~`), `>` 인용, 구분선(`---`, `***`, `___`), HTML 태그 줄은 규칙 6(목록 항목)보다 먼저 검사한다. 그러지 않으면 `---`와 `***`가 목록 항목으로 읽힌다.
 - 표 발견 항목의 줄 번호는 어긋난 그 행의 줄이다.
-- 구분 줄은 셀이 모두 `-` 하나 이상(앞뒤에 `:` 가능)인 `|` 줄이다. 구분 줄이 둘째 줄 말고 또 있는 `|` 묶음은 표로 읽지 않고 줄마다 미분류로 둔다(표 두 개가 빈 줄 없이 붙었을 수 있고, 어디서 나눌지는 추측이다). 셀이 모두 `-`뿐인 데이터 행(`| - | - |`)도 구분 줄로 본다.
+- 구분 줄은 적힌 그대로의 셀이 모두 `-` 하나 이상(앞뒤에 `:` 가능)인 `|` 줄이다. `**---**`처럼 굵게 적힌 대시는 구분 줄의 셀이 아니다. 구분 줄이 둘째 줄 하나뿐인 `|` 묶음만 표로 읽는다. 첫 줄이든 셋째 줄 뒤든 다른 줄이 구분 줄이면 줄마다 미분류로 둔다(표 두 개가 빈 줄 없이 붙었거나 머리글이 빠졌을 수 있고, 어느 쪽인지는 추측이다). 셀이 모두 `-`뿐인 머리글이나 데이터 행(`| - | - |`)도 구분 줄로 본다.
 - 페이지 마커가 하나 있고 다른 줄이 있으면 정상 문서다. 빈 줄뿐인 파일만 `EMPTY_DOCUMENT`다.
 
 **토큰**
@@ -2245,7 +2245,7 @@ git push -u origin main
 
 ### Task 7: 파서 — 표
 
-설계 §5의 규칙 4와 §5.1. `|`로 시작하는 줄이 이어지고 둘째 줄이 구분 줄이면 표 하나다. 구분 줄이 없거나 둘 이상인 `|` 묶음은 줄마다 미분류로 둔다. 줄 가운데에 줄바꿈 문자가 있는 `|` 줄은 표에 넣지 않는다. 열 수가 머리글과 다른 행은 읽은 그대로 두고 `TABLE_ROW_WIDTH_MISMATCH`를 낸다.
+설계 §5의 규칙 4와 §5.1. `|`로 시작하는 줄이 이어지고 둘째 줄이 구분 줄이면 표 하나다. 구분 줄이 없거나 둘째 줄 말고 다른 줄에도 있는 `|` 묶음은 줄마다 미분류로 둔다. 줄 가운데에 줄바꿈 문자가 있는 `|` 줄은 표에 넣지 않는다. 열 수가 머리글과 다른 행은 읽은 그대로 두고 `TABLE_ROW_WIDTH_MISMATCH`를 낸다.
 
 **Files:**
 - Modify: `app/parsing/line_parser.py`
@@ -2408,6 +2408,7 @@ def test_separator_rows(parse, separator):
         "|---|나|",  # one cell is not dashes
         "|---x|---|",  # dashes with something after them
         "||",  # no dashes at all
+        "|**---**|**---**|",  # dashes in bold: a separator cell is dashes as written
     ],
 )
 def test_a_second_line_that_is_not_a_separator_makes_no_table(parse, second_line):
@@ -2469,6 +2470,40 @@ def test_a_data_row_of_dashes_counts_as_a_second_separator(parse):
     elements, findings = parse("[PAGE 1]\n|가|나|\n|---|---|\n| - | - |")
     assert [element.kind for element in elements[1:]] == ["unclassified"] * 3
     assert [finding.code for finding in findings] == ["UNCLASSIFIED_LINE"] * 3
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        "|---|---|\n|---|---|\n|1|2|",  # the first line too
+        "| - | - |\n|---|---|\n|1|2|",  # a header of dashes
+        "|---|---|\n|1|2|",  # the first line only
+        "|가|나|\n|1|2|\n|---|---|",  # the third line only
+    ],
+)
+def test_a_separator_row_outside_the_second_line_leaves_the_block_unclassified(parse, block):
+    # a header may have gone missing: no line is taken for one
+    elements, findings = parse("[PAGE 1]\n" + block)
+    lines = block.split("\n")
+    assert [element.kind for element in elements[1:]] == ["unclassified"] * len(lines)
+    assert [element.text for element in elements[1:]] == lines
+    assert [finding.code for finding in findings] == ["UNCLASSIFIED_LINE"] * len(lines)
+
+
+def test_the_lines_after_a_header_that_was_left_out_are_not_read_as_a_table(parse):
+    # the header holds a form feed and is left out of the block, which then opens
+    # with the separator row: the row of dashes after it is not taken for a separator
+    text = "[PAGE 1]\n|가\x0c나|다|\n|---|---|\n| - | - |\n|1|2|"
+    elements, findings = parse(text)
+    assert [element.kind for element in elements[1:]] == ["unclassified"] * 4
+    assert [finding.line_start for finding in findings] == [2, 3, 4, 5]
+
+
+def test_a_data_row_of_dashes_in_bold_is_a_data_row(parse):
+    elements, findings = parse("[PAGE 1]\n|가|나|\n|---|---|\n|**-**|**-**|")
+    assert elements[1].kind == "table"
+    assert [cell.text for cell in elements[1].rows[0]] == ["-", "-"]
+    assert findings == ()
 ```
 
 - [ ] **Step 2: 테스트가 실패하는지 확인한다**
@@ -2486,11 +2521,11 @@ E   ImportError: cannot import name 'split_table_row' from 'app.parsing.line_par
 
 이 단계에서 바뀌는 것:
 
-- `split_table_row()`와 `_is_separator_row()`가 생긴다. `\|`는 나누지 않는다.
+- `_cells_as_written()`, `split_table_row()`, `_is_separator_row()`가 생긴다. `\|`는 나누지 않는다. 구분 줄인지는 `**`를 벗기기 전의 셀로 본다.
 - `_Builder.table()`이 생긴다. 표의 줄 전체를 요소 하나로 만들고 `table_index`를 1부터 매긴다. 머리글은 `header`에, 구분 줄 뒤의 행은 `rows`에 넣는다.
 - `_Builder.flag()`가 줄 번호를 따로 받을 수 있다. 표의 발견 항목은 표 전체가 아니라 어긋난 행의 줄을 가리킨다.
 - `_continues_table()`이 생긴다. 줄 가운데에 다른 도구가 줄바꿈으로 보는 문자가 있는 `|` 줄은 표를 잇지 않는다. 표는 그 앞 줄에서 끝나고, 그 줄은 다음 차례에 미분류가 된다.
-- `_is_table()`이 생긴다. 둘째 줄이 구분 줄이고 그 뒤에 구분 줄이 더 없어야 표다.
+- `_is_table()`이 생긴다. 묶음에서 구분 줄이 둘째 줄 하나뿐이어야 표다.
 - `parse_lines()`에 규칙 4가 들어간다. 헤딩 규칙 다음, 문단 규칙 앞이다.
 
 `app/parsing/line_parser.py` 전체를 아래 내용으로 바꾼다:
@@ -2577,39 +2612,39 @@ def _reads_plainly(rest: str) -> bool:
     return _split_heading(rest)[0] == _split_heading(shown)[0]
 
 
-def split_table_row(line: str) -> list[str]:
-    """'|a|b| ' -> ['a', 'b']. An escaped pipe (\\|) does not split."""
+def _cells_as_written(line: str) -> list[str]:
+    """'|a|**b**| ' -> ['a', '**b**']. An escaped pipe (\\|) does not split."""
     body = line.strip()
     if body.startswith("|"):
         body = body[1:]
     if body.endswith("|") and not body.endswith("\\|"):
         body = body[:-1]
-    return [clean_text(cell.strip().replace("\\|", "|")) for cell in _CELL_SPLIT_RE.split(body)]
+    return [cell.strip() for cell in _CELL_SPLIT_RE.split(body)]
+
+
+def split_table_row(line: str) -> list[str]:
+    """'|a|**b**| ' -> ['a', 'b']. An escaped pipe (\\|) does not split."""
+    return [clean_text(cell.replace("\\|", "|")) for cell in _cells_as_written(line)]
 
 
 def _is_separator_row(line: str) -> bool:
-    body = line.strip()
-    if not body.startswith("|"):
-        return False
-    cells = split_table_row(body)
-    return bool(cells) and all(_SEPARATOR_CELL_RE.fullmatch(cell) for cell in cells)
+    """True for a pipe line whose every cell, as written, is dashes with optional colons."""
+    return all(_SEPARATOR_CELL_RE.fullmatch(cell) for cell in _cells_as_written(line))
 
 
 def _continues_table(line: str) -> bool:
-    """True for a pipe line that holds no character other tools end a line at."""
+    """True for a pipe line with no character in its middle that other tools end a line at."""
     body = line.strip()
     return body.startswith("|") and len(body.splitlines()) == 1
 
 
 def _is_table(block: list[str]) -> bool:
-    """A header, then a separator row, and no separator row further down.
+    """A header, then a separator row, and no separator row anywhere else.
 
-    A second separator row can mean that two tables have run together, so the block
-    is not read as a table: nothing is guessed.
+    A separator row in another place can mean that two tables have run together or that
+    a header went missing, so the block is not read as a table: nothing is guessed.
     """
-    if len(block) < 2 or not _is_separator_row(block[1]):
-        return False
-    return not any(_is_separator_row(line) for line in block[2:])
+    return [index for index, line in enumerate(block) if _is_separator_row(line)] == [1]
 
 
 class _Builder:
@@ -2811,7 +2846,7 @@ def parse_lines(
 
 Run: `.venv/Scripts/python -m pytest tests/parsing/test_parser_tables.py -q`
 
-Expected: 마지막 줄이 `34 passed`
+Expected: 마지막 줄이 `41 passed`
 
 - [ ] **Step 5: 전체 검사를 돌린다**
 
@@ -2821,7 +2856,7 @@ Expected: 마지막 줄이 `34 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `274 passed`, `All checks passed!`, `14 files already formatted`
+Expected: 차례로 `281 passed`, `All checks passed!`, `14 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -3098,39 +3133,39 @@ def _reads_plainly(rest: str) -> bool:
     return _split_heading(rest)[0] == _split_heading(shown)[0]
 
 
-def split_table_row(line: str) -> list[str]:
-    """'|a|b| ' -> ['a', 'b']. An escaped pipe (\\|) does not split."""
+def _cells_as_written(line: str) -> list[str]:
+    """'|a|**b**| ' -> ['a', '**b**']. An escaped pipe (\\|) does not split."""
     body = line.strip()
     if body.startswith("|"):
         body = body[1:]
     if body.endswith("|") and not body.endswith("\\|"):
         body = body[:-1]
-    return [clean_text(cell.strip().replace("\\|", "|")) for cell in _CELL_SPLIT_RE.split(body)]
+    return [cell.strip() for cell in _CELL_SPLIT_RE.split(body)]
+
+
+def split_table_row(line: str) -> list[str]:
+    """'|a|**b**| ' -> ['a', 'b']. An escaped pipe (\\|) does not split."""
+    return [clean_text(cell.replace("\\|", "|")) for cell in _cells_as_written(line)]
 
 
 def _is_separator_row(line: str) -> bool:
-    body = line.strip()
-    if not body.startswith("|"):
-        return False
-    cells = split_table_row(body)
-    return bool(cells) and all(_SEPARATOR_CELL_RE.fullmatch(cell) for cell in cells)
+    """True for a pipe line whose every cell, as written, is dashes with optional colons."""
+    return all(_SEPARATOR_CELL_RE.fullmatch(cell) for cell in _cells_as_written(line))
 
 
 def _continues_table(line: str) -> bool:
-    """True for a pipe line that holds no character other tools end a line at."""
+    """True for a pipe line with no character in its middle that other tools end a line at."""
     body = line.strip()
     return body.startswith("|") and len(body.splitlines()) == 1
 
 
 def _is_table(block: list[str]) -> bool:
-    """A header, then a separator row, and no separator row further down.
+    """A header, then a separator row, and no separator row anywhere else.
 
-    A second separator row can mean that two tables have run together, so the block
-    is not read as a table: nothing is guessed.
+    A separator row in another place can mean that two tables have run together or that
+    a header went missing, so the block is not read as a table: nothing is guessed.
     """
-    if len(block) < 2 or not _is_separator_row(block[1]):
-        return False
-    return not any(_is_separator_row(line) for line in block[2:])
+    return [index for index, line in enumerate(block) if _is_separator_row(line)] == [1]
 
 
 class _Builder:
@@ -3406,7 +3441,7 @@ Expected: 마지막 줄이 `39 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `313 passed`, `All checks passed!`, `15 files already formatted`
+Expected: 차례로 `320 passed`, `All checks passed!`, `15 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -3655,39 +3690,39 @@ def _reads_plainly(rest: str) -> bool:
     return _split_heading(rest)[0] == _split_heading(shown)[0]
 
 
-def split_table_row(line: str) -> list[str]:
-    """'|a|b| ' -> ['a', 'b']. An escaped pipe (\\|) does not split."""
+def _cells_as_written(line: str) -> list[str]:
+    """'|a|**b**| ' -> ['a', '**b**']. An escaped pipe (\\|) does not split."""
     body = line.strip()
     if body.startswith("|"):
         body = body[1:]
     if body.endswith("|") and not body.endswith("\\|"):
         body = body[:-1]
-    return [clean_text(cell.strip().replace("\\|", "|")) for cell in _CELL_SPLIT_RE.split(body)]
+    return [cell.strip() for cell in _CELL_SPLIT_RE.split(body)]
+
+
+def split_table_row(line: str) -> list[str]:
+    """'|a|**b**| ' -> ['a', 'b']. An escaped pipe (\\|) does not split."""
+    return [clean_text(cell.replace("\\|", "|")) for cell in _cells_as_written(line)]
 
 
 def _is_separator_row(line: str) -> bool:
-    body = line.strip()
-    if not body.startswith("|"):
-        return False
-    cells = split_table_row(body)
-    return bool(cells) and all(_SEPARATOR_CELL_RE.fullmatch(cell) for cell in cells)
+    """True for a pipe line whose every cell, as written, is dashes with optional colons."""
+    return all(_SEPARATOR_CELL_RE.fullmatch(cell) for cell in _cells_as_written(line))
 
 
 def _continues_table(line: str) -> bool:
-    """True for a pipe line that holds no character other tools end a line at."""
+    """True for a pipe line with no character in its middle that other tools end a line at."""
     body = line.strip()
     return body.startswith("|") and len(body.splitlines()) == 1
 
 
 def _is_table(block: list[str]) -> bool:
-    """A header, then a separator row, and no separator row further down.
+    """A header, then a separator row, and no separator row anywhere else.
 
-    A second separator row can mean that two tables have run together, so the block
-    is not read as a table: nothing is guessed.
+    A separator row in another place can mean that two tables have run together or that
+    a header went missing, so the block is not read as a table: nothing is guessed.
     """
-    if len(block) < 2 or not _is_separator_row(block[1]):
-        return False
-    return not any(_is_separator_row(line) for line in block[2:])
+    return [index for index, line in enumerate(block) if _is_separator_row(line)] == [1]
 
 
 class _Builder:
@@ -3977,7 +4012,7 @@ Expected: 마지막 줄이 `7 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `320 passed`, `All checks passed!`, `17 files already formatted`
+Expected: 차례로 `327 passed`, `All checks passed!`, `17 files already formatted`
 
 - [ ] **Step 7: 커밋한다**
 
@@ -4132,7 +4167,7 @@ Expected: 마지막 줄이 `11 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `331 passed`, `All checks passed!`, `18 files already formatted`
+Expected: 차례로 `338 passed`, `All checks passed!`, `18 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -4304,7 +4339,7 @@ Expected: 마지막 줄이 `30 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `361 passed`, `All checks passed!`, `20 files already formatted`
+Expected: 차례로 `368 passed`, `All checks passed!`, `20 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -4629,7 +4664,7 @@ Expected: 마지막 줄이 `57 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `418 passed`, `All checks passed!`, `21 files already formatted`
+Expected: 차례로 `425 passed`, `All checks passed!`, `21 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -4998,7 +5033,7 @@ Expected: 마지막 줄이 `15 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `433 passed`, `All checks passed!`, `22 files already formatted`
+Expected: 차례로 `440 passed`, `All checks passed!`, `22 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5602,7 +5637,7 @@ Expected: 마지막 줄이 `22 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `455 passed`, `All checks passed!`, `24 files already formatted`
+Expected: 차례로 `462 passed`, `All checks passed!`, `24 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5821,7 +5856,7 @@ Expected: 마지막 줄이 `24 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `479 passed`, `All checks passed!`, `25 files already formatted`
+Expected: 차례로 `486 passed`, `All checks passed!`, `25 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -6046,7 +6081,7 @@ Expected: 마지막 줄이 `23 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `502 passed`, `All checks passed!`, `27 files already formatted`
+Expected: 차례로 `509 passed`, `All checks passed!`, `27 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6509,7 +6544,7 @@ Expected: 마지막 줄이 `33 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `535 passed`, `All checks passed!`, `29 files already formatted`
+Expected: 차례로 `542 passed`, `All checks passed!`, `29 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6855,7 +6890,7 @@ Expected: 종료 코드 0, 출력은 아래와 같다.
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `553 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `560 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 11: 커밋한다**
 
@@ -7032,7 +7067,7 @@ python -m venv .venv
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `553 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `560 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 5: 설계의 완료 기준을 하나씩 확인한다**
 

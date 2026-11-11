@@ -211,27 +211,50 @@ def _unfit(token: NumberToken) -> bool:
     return token.value is None
 
 
-def _value(token: NumberToken) -> object:
-    return token.value
+def _cancel_by_value(left: list[NumberToken], right: list[NumberToken]) -> None:
+    """Remove pairs (one from each list) that both fit their notation and share a value.
+
+    One side may write a value in several ways ('1.0' and '1'). A spelling that the other
+    side holds as a number that fits no notation is cancelled last, so that step 2 can
+    still pair it as written. Otherwise the result would depend on the order of the numbers.
+    """
+    shared = Counter(token.value for token in left if _fits(token)) & Counter(
+        token.value for token in right if _fits(token)
+    )
+    for mine, theirs in ((left, right), (right, left)):
+        wanted = Counter(token.raw for token in theirs if _unfit(token))
+        first: list[int] = []
+        last: list[int] = []
+        for index, token in enumerate(mine):
+            if _unfit(token):
+                continue
+            if wanted[token.raw] > 0:
+                wanted[token.raw] -= 1
+                last.append(index)
+            else:
+                first.append(index)
+        todo = Counter(shared)
+        gone: set[int] = set()
+        for index in first + last:
+            value = mine[index].value
+            if todo[value] > 0:
+                todo[value] -= 1
+                gone.add(index)
+        mine[:] = [token for index, token in enumerate(mine) if index not in gone]
 
 
-def _raw(token: NumberToken) -> object:
-    return token.raw
-
-
-def _cancel(
+def _cancel_as_written(
     left: list[NumberToken],
     right: list[NumberToken],
     left_ok: Callable[[NumberToken], bool],
     right_ok: Callable[[NumberToken], bool],
-    key: Callable[[NumberToken], object],
 ) -> None:
-    """Remove pairs (one from each list) that pass the filters and share a key."""
+    """Remove pairs (one from each list) that pass the filters and are written alike."""
     for token in list(left):
         if not left_ok(token):
             continue
         for candidate in right:
-            if right_ok(candidate) and key(candidate) == key(token):
+            if right_ok(candidate) and candidate.raw == token.raw:
                 left.remove(token)
                 right.remove(candidate)
                 break
@@ -241,11 +264,11 @@ def compare_tokens(translated: Tokens, source: Tokens) -> TokenDiff:
     left = list(translated.numbers)
     right = list(source.numbers)
     # 1. both sides fit their own notation: compare by value
-    _cancel(left, right, _fits, _fits, _value)
+    _cancel_by_value(left, right)
     # 2. at least one side does not fit: compare as strings
-    _cancel(left, right, _unfit, _unfit, _raw)
-    _cancel(left, right, _unfit, _fits, _raw)
-    _cancel(left, right, _fits, _unfit, _raw)
+    _cancel_as_written(left, right, _unfit, _unfit)
+    _cancel_as_written(left, right, _unfit, _fits)
+    _cancel_as_written(left, right, _fits, _unfit)
     # 3. whatever is left is a mismatch
 
     other_left = Counter(translated.others)

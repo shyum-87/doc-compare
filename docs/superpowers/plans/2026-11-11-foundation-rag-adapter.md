@@ -82,8 +82,8 @@
 - 이미지는 이미지 ID와 파일 이름이 모두 있어야 한다. 하나라도 비었거나 공백뿐이면 미분류다(ID가 없으면 원문과 짝지을 열쇠가 없다). 이미지가 헤딩, 표, 목록 항목, 문단 안에 적혀 있으면(`![…](`가 들어 있으면) 그 요소는 그대로 읽고 `IMAGE_PRESENT`를 그 요소에 붙인다. 이미지가 있는 줄마다 하나이며, 한 줄에 이미지가 둘이어도 하나다. 미분류 줄에는 붙이지 않는다(이미 검토 필요다).
 - 목록 번호의 숫자는 어느 문자 체계의 숫자든 받고(전각 `１)`), 표시는 적힌 그대로 저장한다.
 - 목록 표시(`1)`, `1.`, `-`, `*`)와 처음 보이는 글자 사이에 가리는 문자가 있으면 미분류다(`*`와 공백은 건너뛰고 본다). 표시가 무엇인지, `-`가 숫자의 부호인지가 보이지 않는 문자에 달리기 때문이다.
-- `숫자.` 표시 뒤의 본문이 다시 `숫자.`와 공백(또는 줄 끝)으로 시작하면 미분류다(`2024. 5. 1 개정`, `1. 2. 항목`, `1. **2. 항목**`). 날짜나 숫자 나열일 수 있고, 앞 숫자를 목록 번호로 떼어 내면 값이 사라진다. `2. 5 kg 투입`처럼 뒤 숫자에 점이 없으면 표시가 `2.`인 목록 항목이다.
-- 공백 없는 `-` 뒤에서 `*`와 공백을 건너뛴 첫 글자가 숫자이거나, `.`이나 `,`이고 그다음이 숫자이면 문단 + `AMBIGUOUS_LIST_OR_NEGATIVE`다(`-18℃`, `-**18℃**`, `-.5 kg`). 숫자는 유니코드 숫자 범주(Nd·Nl·No)의 문자다. 전각 숫자, `½`, `①`이 들어가고, 숫자를 뜻하는 한자(`三`)는 글자라서 들어가지 않는다. `-` 뒤에 보이는 글자가 없거나(`-`, `-*`, `-**`) `-`가 또 오면(`--`) 미분류다.
+- `숫자.` 표시 뒤의 본문이 다시 `숫자.`와 공백(또는 줄 끝)으로 시작하면 미분류다(`2024. 5. 1 개정`, `1. 2. 항목`, `1. **2. 항목**`). 본문은 `*`와 가리는 문자를 빼고 본다. 날짜나 숫자 나열일 수 있고, 앞 숫자를 목록 번호로 떼어 내면 값이 사라진다. `2. 5 kg 투입`처럼 뒤 숫자에 점이 없으면 표시가 `2.`인 목록 항목이다.
+- 공백 없는 `-` 뒤에서 `*`와 공백을 건너뛴 첫 글자가 숫자이거나, `.`이나 `,`이고 그다음이 숫자이면 문단 + `AMBIGUOUS_LIST_OR_NEGATIVE`다(`-18℃`, `-**18℃**`, `-.5 kg`). `.`이나 `,`와 숫자 사이의 가리는 문자는 없는 것으로 본다(처음 보이는 글자 앞의 가리는 문자는 위 규칙대로 미분류다). 숫자는 유니코드 숫자 범주(Nd·Nl·No)의 문자다. 전각 숫자, `½`, `①`이 들어가고, 숫자를 뜻하는 한자(`三`)는 글자라서 들어가지 않는다. `-` 뒤에 보이는 글자가 없거나(`-`, `-*`, `-**`) `-`가 또 오면(`--`) 미분류다.
 - 표 발견 항목의 줄 번호는 어긋난 그 행의 줄이다.
 - 구분 줄은 적힌 그대로의 셀이 모두 `-` 하나 이상(앞뒤에 `:` 가능)인 `|` 줄이다. `**---**`처럼 굵게 적힌 대시는 구분 줄의 셀이 아니다. 구분 줄이 둘째 줄 하나뿐인 `|` 묶음만 표로 읽는다. 첫 줄이든 셋째 줄 뒤든 다른 줄이 구분 줄이면 줄마다 미분류로 둔다(표 두 개가 빈 줄 없이 붙었거나 머리글이 빠졌을 수 있고, 어느 쪽인지는 추측이다). 셀이 모두 `-`뿐인 머리글이나 데이터 행(`| - | - |`)도 구분 줄로 본다.
 - 페이지 마커가 하나 있고 다른 줄이 있으면 정상 문서다. 빈 줄뿐인 파일만 `EMPTY_DOCUMENT`다.
@@ -2953,6 +2953,7 @@ def test_a_malformed_image_is_unclassified(parse, line):
     "block, kind, lines",
     [
         ('앞 글 ![img1](<img1.png "제목">) 뒤 글', "paragraph", [2]),
+        ("앞 ![](b.png) 뒤", "paragraph", [2]),  # not an image element, still an image
         ("- ![img1](img1.png)", "list_item", [2]),
         ("## 3.1 화면 ![img1](img1.png)", "heading", [2]),
         ('|단계|화면|\n|---|---|\n|1|없음|\n|2|![img1](<img1.png "제목">)|', "table", [5]),
@@ -2996,10 +2997,11 @@ def test_an_exclamation_mark_before_a_bracket_is_not_an_image(parse):
         ("2. 5 kg 투입", "2.", "5 kg 투입"),
         ("1. 2.5 kg 투입", "1.", "2.5 kg 투입"),
         ("1) 2. 확인한다", "1)", "2. 확인한다"),
+        ("1. 가열한다 2. 식힌다", "1.", "가열한다 2. 식힌다"),
         ("- 2. 확인한다", "-", "2. 확인한다"),
         ("- -18℃ 이하로 보관", "-", "-18℃ 이하로 보관"),
         ("-三호기 점검", "-", "三호기 점검"),  # a numeral that is a letter, not a number sign
-        ("-.env 파일을 확인한다", "-", ".env 파일을 확인한다"),
+        ("-.env 파일 2개를 확인한다", "-", ".env 파일 2개를 확인한다"),
     ],
 )
 def test_list_item(parse, line, marker, text):
@@ -3072,11 +3074,13 @@ def test_a_hyphen_before_a_digit_is_not_decided(parse, line):
             "-\N{FULLWIDTH DIGIT ONE}\N{FULLWIDTH DIGIT EIGHT}℃",
         ),
         ("-\N{VULGAR FRACTION ONE HALF} 컵", "-\N{VULGAR FRACTION ONE HALF} 컵"),
+        ("-\N{ROMAN NUMERAL FOUR} 구역", "-\N{ROMAN NUMERAL FOUR} 구역"),
+        ("-.\N{ZERO WIDTH SPACE}5 kg", "-.\N{ZERO WIDTH SPACE}5 kg"),
     ],
 )
 def test_a_hyphen_before_a_number_in_another_form_is_not_decided(parse, line, text):
-    # bold marks, a decimal point with no zero, and digits of other scripts do not
-    # turn the sign into a list marker
+    # bold marks, a decimal point with no zero, digits of other scripts and a character
+    # that is not seen inside the number do not turn the sign into a list marker
     elements, findings = parse("[PAGE 1]\n" + line)
     assert elements[1].kind == "paragraph"
     assert elements[1].text == text
@@ -3119,6 +3123,7 @@ def test_a_hiding_character_next_to_a_list_marker_leaves_the_line_unclassified(p
         "3. 4.",
         "1. **2. 항목**",
         "1. \N{FULLWIDTH DIGIT TWO}. 항목",
+        "2024. 5\N{ZERO WIDTH SPACE}. 1 개정",
     ],
 )
 def test_a_number_and_dot_after_a_number_and_dot_is_not_read_as_a_list_item(parse, line):
@@ -3186,7 +3191,7 @@ FAILED tests/parsing/test_parser_blocks.py::test_a_hyphen_before_a_digit_is_not_
 FAILED tests/parsing/test_parser_blocks.py::test_a_hyphen_a_space_and_a_digit_is_a_list_item
 FAILED tests/parsing/test_parser_blocks.py::test_structural_lines_that_are_not_interpreted
 FAILED tests/parsing/test_parser_blocks.py::test_an_unclassified_line_does_not_hide_its_neighbours
-92 failed, 17 passed
+97 failed, 17 passed
 ```
 
 - [ ] **Step 3: 파서를 고친다**
@@ -3197,7 +3202,7 @@ FAILED tests/parsing/test_parser_blocks.py::test_an_unclassified_line_does_not_h
 - `_Builder.add()`가 이미지와 미분류가 아닌 요소의 줄마다 `![…](`가 있는지 보고, 있으면 그 줄 번호로 `IMAGE_PRESENT`를 붙인다.
 - `parse_lines()`에 규칙 5(이미지)가 들어간다. `![`로 시작하지만 두 형식 어느 쪽에도 맞지 않거나, 이미지 ID나 파일 이름이 비어 있으면 미분류다.
 - 규칙 8 중 코드 펜스, `>` 인용, 구분선(공백을 둔 `- - -`, `* * *` 포함), HTML 태그 줄, `<!--` 줄을 목록 규칙보다 먼저 검사한다. `---`와 `***`가 목록 항목으로 읽히지 않게 하기 위해서다.
-- `_starts_hidden()`과 `_is_number()`가 생긴다. 앞의 것은 `*`와 공백을 건너뛴 첫 글자가 가리는 문자인지, 뒤의 것은 글자가 유니코드 숫자 범주인지 본다.
+- `_starts_hidden()`, `_is_number()`, `_unmarked()`가 생긴다. 첫째는 `*`와 공백을 건너뛴 첫 글자가 가리는 문자인지, 둘째는 글자가 유니코드 숫자 범주인지 보고, 셋째는 가리는 문자와 `*`를 뺀 글을 돌려준다(목록 규칙의 두 숫자 검사가 이 글로 본다).
 - 규칙 6(목록 항목)이 들어간다. `1)`, `1. `, `- `, `* `, 공백 없는 `-글자`다. 표시 옆에 가리는 문자가 있거나 `숫자.` 뒤에 `숫자.`가 또 오면 미분류다. 공백 없는 `-` 뒤가 숫자이면(`*`와 공백을 건너뛰고, `.5`와 `,5`도 포함) 문단 + `AMBIGUOUS_LIST_OR_NEGATIVE`, `-` 뒤에 보이는 글자가 없거나 `--`이면 미분류다.
 
 `app/parsing/line_parser.py` 전체를 아래 내용으로 바꾼다:
@@ -3271,6 +3276,11 @@ def _hides(char: str) -> bool:
 def _squeezed(line: str) -> str:
     """The line without what a reader does not see: hiding characters, '*' and spaces."""
     return "".join(char for char in line if not (_hides(char) or char == "*" or char.isspace()))
+
+
+def _unmarked(text: str) -> str:
+    """The text without hiding characters and '*', with its spaces kept."""
+    return "".join(char for char in text if not (_hides(char) or char == "*"))
 
 
 def _starts_hidden(text: str) -> bool:
@@ -3588,7 +3598,7 @@ def parse_lines(
         )
         if match:
             marker, gap, body = match.groups()
-            dotted = marker.endswith(".") and _NUMBER_DOT_RE.match(body.replace("*", ""))
+            dotted = marker.endswith(".") and _NUMBER_DOT_RE.match(_unmarked(body))
             if _starts_hidden(gap + body) or dotted:
                 # a hiding character next to the marker, or '2024. 5. 1 ...': not decided here
                 builder.unclassified(stripped, line_no, raw)
@@ -3597,7 +3607,7 @@ def parse_lines(
             continue
         if stripped.startswith("-"):
             rest = stripped[1:]
-            shown = rest.replace("*", "").lstrip()
+            shown = _unmarked(rest).lstrip()
             if not shown or shown.startswith("-") or _starts_hidden(rest):
                 builder.unclassified(stripped, line_no, raw)
             elif _is_number(shown[0]) or (shown[0] in ".," and _is_number(shown[1:2])):
@@ -3620,7 +3630,7 @@ def parse_lines(
 
 Run: `.venv/Scripts/python -m pytest tests/parsing/test_parser_blocks.py -q`
 
-Expected: 마지막 줄이 `109 passed`
+Expected: 마지막 줄이 `114 passed`
 
 - [ ] **Step 5: 전체 검사를 돌린다**
 
@@ -3630,7 +3640,7 @@ Expected: 마지막 줄이 `109 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `390 passed`, `All checks passed!`, `15 files already formatted`
+Expected: 차례로 `395 passed`, `All checks passed!`, `15 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -3859,6 +3869,11 @@ def _squeezed(line: str) -> str:
     return "".join(char for char in line if not (_hides(char) or char == "*" or char.isspace()))
 
 
+def _unmarked(text: str) -> str:
+    """The text without hiding characters and '*', with its spaces kept."""
+    return "".join(char for char in text if not (_hides(char) or char == "*"))
+
+
 def _starts_hidden(text: str) -> bool:
     """True when a hiding character comes before the first character that shows."""
     for char in text:
@@ -4174,7 +4189,7 @@ def parse_lines(
         )
         if match:
             marker, gap, body = match.groups()
-            dotted = marker.endswith(".") and _NUMBER_DOT_RE.match(body.replace("*", ""))
+            dotted = marker.endswith(".") and _NUMBER_DOT_RE.match(_unmarked(body))
             if _starts_hidden(gap + body) or dotted:
                 # a hiding character next to the marker, or '2024. 5. 1 ...': not decided here
                 builder.unclassified(stripped, line_no, raw)
@@ -4183,7 +4198,7 @@ def parse_lines(
             continue
         if stripped.startswith("-"):
             rest = stripped[1:]
-            shown = rest.replace("*", "").lstrip()
+            shown = _unmarked(rest).lstrip()
             if not shown or shown.startswith("-") or _starts_hidden(rest):
                 builder.unclassified(stripped, line_no, raw)
             elif _is_number(shown[0]) or (shown[0] in ".," and _is_number(shown[1:2])):
@@ -4230,7 +4245,7 @@ Expected: 마지막 줄이 `7 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `397 passed`, `All checks passed!`, `17 files already formatted`
+Expected: 차례로 `402 passed`, `All checks passed!`, `17 files already formatted`
 
 - [ ] **Step 7: 커밋한다**
 
@@ -4385,7 +4400,7 @@ Expected: 마지막 줄이 `11 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `408 passed`, `All checks passed!`, `18 files already formatted`
+Expected: 차례로 `413 passed`, `All checks passed!`, `18 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -4557,7 +4572,7 @@ Expected: 마지막 줄이 `30 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `438 passed`, `All checks passed!`, `20 files already formatted`
+Expected: 차례로 `443 passed`, `All checks passed!`, `20 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -4882,7 +4897,7 @@ Expected: 마지막 줄이 `57 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `495 passed`, `All checks passed!`, `21 files already formatted`
+Expected: 차례로 `500 passed`, `All checks passed!`, `21 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5251,7 +5266,7 @@ Expected: 마지막 줄이 `15 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `510 passed`, `All checks passed!`, `22 files already formatted`
+Expected: 차례로 `515 passed`, `All checks passed!`, `22 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5855,7 +5870,7 @@ Expected: 마지막 줄이 `22 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `532 passed`, `All checks passed!`, `24 files already formatted`
+Expected: 차례로 `537 passed`, `All checks passed!`, `24 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6074,7 +6089,7 @@ Expected: 마지막 줄이 `24 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `556 passed`, `All checks passed!`, `25 files already formatted`
+Expected: 차례로 `561 passed`, `All checks passed!`, `25 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -6299,7 +6314,7 @@ Expected: 마지막 줄이 `23 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `579 passed`, `All checks passed!`, `27 files already formatted`
+Expected: 차례로 `584 passed`, `All checks passed!`, `27 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6762,7 +6777,7 @@ Expected: 마지막 줄이 `33 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `612 passed`, `All checks passed!`, `29 files already formatted`
+Expected: 차례로 `617 passed`, `All checks passed!`, `29 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -7108,7 +7123,7 @@ Expected: 종료 코드 0, 출력은 아래와 같다.
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `630 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `635 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 11: 커밋한다**
 
@@ -7285,7 +7300,7 @@ python -m venv .venv
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `630 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `635 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 5: 설계의 완료 기준을 하나씩 확인한다**
 

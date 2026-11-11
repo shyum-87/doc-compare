@@ -292,7 +292,7 @@ git push -u origin main
 
 ### Task 2: 문서 모델
 
-설계 §4. 문서, 일곱 가지 요소, 위치 정보를 Pydantic 모델로 만든다. 모델은 만들어진 뒤 바꿀 수 없고(frozen), 모르는 필드를 받지 않는다(`extra="forbid"`).
+설계 §4. 문서, 일곱 가지 요소, 위치 정보를 Pydantic 모델로 만든다. 모델은 만들어진 뒤 바꿀 수 없고(frozen), 모르는 필드를 받지 않는다(`extra="forbid"`). 있을 수 없는 위치도 받지 않는다. 줄 번호는 1 이상이고 끝 줄이 시작 줄보다 앞설 수 없다. `element_id`는 비어 있을 수 없고 한 문서 안에서 겹치지 않는다. 표의 셀은 자기 자리(행, 열)와 같은 번호를 갖는다.
 
 **Files:**
 - Create: `app/models/document.py`
@@ -385,6 +385,31 @@ def test_an_element_of_unknown_kind_is_rejected():
     data["elements"][0]["kind"] = "footnote"
     with pytest.raises(ValidationError):
         Document.model_validate(data)
+
+
+@pytest.mark.parametrize(("line_start", "line_end"), [(0, 1), (-2, 3), (1, 0), (5, 2)])
+def test_a_locator_rejects_impossible_line_numbers(line_start, line_end):
+    with pytest.raises(ValidationError):
+        _locator(line_start, line_end)
+
+
+def test_an_element_needs_an_id():
+    with pytest.raises(ValidationError):
+        Paragraph(element_id="", locator=_locator(1, 1), raw="문장", text="문장")
+
+
+def test_a_table_cell_must_sit_where_it_says():
+    data = _document().model_dump()
+    data["elements"][1]["rows"][0][1]["col"] = 9
+    with pytest.raises(ValidationError):
+        Document.model_validate(data)
+
+
+def test_two_elements_cannot_share_an_id():
+    data = _document().model_dump()
+    data["elements"][1]["element_id"] = "e0001"
+    with pytest.raises(ValidationError):
+        Document.model_validate(data)
 ```
 
 - [ ] **Step 2: 테스트가 실패하는지 확인한다**
@@ -409,7 +434,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Language = Literal["ko", "vi", "en", "zh"]
 Variant = Literal["translated", "source"]
@@ -422,12 +447,18 @@ class FrozenModel(BaseModel):
 class Locator(FrozenModel):
     page: Optional[int]
     section_path: tuple[str, ...]
-    line_start: int
-    line_end: int
+    line_start: int = Field(ge=1)
+    line_end: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def _lines_are_in_order(self) -> Locator:
+        if self.line_end < self.line_start:
+            raise ValueError("line_end is before line_start")
+        return self
 
 
 class ElementBase(FrozenModel):
-    element_id: str
+    element_id: str = Field(min_length=1)
     locator: Locator
     raw: str
     text: str
@@ -466,6 +497,14 @@ class Table(ElementBase):
     header: tuple[str, ...]
     rows: tuple[tuple[TableCell, ...], ...]
 
+    @model_validator(mode="after")
+    def _cells_know_their_position(self) -> Table:
+        for r, cells in enumerate(self.rows, start=1):
+            for c, cell in enumerate(cells, start=1):
+                if (cell.row, cell.col) != (r, c):
+                    raise ValueError(f"the cell at row {r}, column {c} is numbered differently")
+        return self
+
 
 class Image(ElementBase):
     kind: Literal["image"] = "image"
@@ -493,6 +532,15 @@ class Document(FrozenModel):
     sha256: str
     elements: tuple[Element, ...]
 
+    @model_validator(mode="after")
+    def _element_ids_are_unique(self) -> Document:
+        seen: set[str] = set()
+        for element in self.elements:
+            if element.element_id in seen:
+                raise ValueError(f"element_id {element.element_id} is used twice")
+            seen.add(element.element_id)
+        return self
+
 
 def element_id_for(index: int) -> str:
     """1-based position in the document -> 'e0001'."""
@@ -510,7 +558,7 @@ def cell_ref(element_id: str, row: int, col: int) -> str:
 
 Run: `.venv/Scripts/python -m pytest tests/models/test_document.py -q`
 
-Expected: 마지막 줄이 `6 passed`
+Expected: 마지막 줄이 `13 passed`
 
 - [ ] **Step 5: 전체 검사를 돌린다**
 
@@ -520,7 +568,7 @@ Expected: 마지막 줄이 `6 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `6 passed`, `All checks passed!`, `5 files already formatted`
+Expected: 차례로 `13 passed`, `All checks passed!`, `5 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -754,7 +802,7 @@ Expected: 마지막 줄이 `19 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `25 passed`, `All checks passed!`, `7 files already formatted`
+Expected: 차례로 `32 passed`, `All checks passed!`, `7 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -924,7 +972,7 @@ Expected: 마지막 줄이 `8 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `33 passed`, `All checks passed!`, `9 files already formatted`
+Expected: 차례로 `40 passed`, `All checks passed!`, `9 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -1330,7 +1378,7 @@ Expected: 마지막 줄이 `31 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `64 passed`, `All checks passed!`, `12 files already formatted`
+Expected: 차례로 `71 passed`, `All checks passed!`, `12 files already formatted`
 
 - [ ] **Step 7: 커밋한다**
 
@@ -1664,7 +1712,7 @@ Expected: 마지막 줄이 `9 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `73 passed`, `All checks passed!`, `13 files already formatted`
+Expected: 차례로 `80 passed`, `All checks passed!`, `13 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -2102,7 +2150,7 @@ Expected: 마지막 줄이 `16 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `89 passed`, `All checks passed!`, `14 files already formatted`
+Expected: 차례로 `96 passed`, `All checks passed!`, `14 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -2621,7 +2669,7 @@ Expected: 마지막 줄이 `39 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `128 passed`, `All checks passed!`, `15 files already formatted`
+Expected: 차례로 `135 passed`, `All checks passed!`, `15 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -3126,7 +3174,7 @@ Expected: 마지막 줄이 `7 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `135 passed`, `All checks passed!`, `17 files already formatted`
+Expected: 차례로 `142 passed`, `All checks passed!`, `17 files already formatted`
 
 - [ ] **Step 7: 커밋한다**
 
@@ -3281,7 +3329,7 @@ Expected: 마지막 줄이 `11 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `146 passed`, `All checks passed!`, `18 files already formatted`
+Expected: 차례로 `153 passed`, `All checks passed!`, `18 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -3453,7 +3501,7 @@ Expected: 마지막 줄이 `30 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `176 passed`, `All checks passed!`, `20 files already formatted`
+Expected: 차례로 `183 passed`, `All checks passed!`, `20 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -3778,7 +3826,7 @@ Expected: 마지막 줄이 `57 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `233 passed`, `All checks passed!`, `21 files already formatted`
+Expected: 차례로 `240 passed`, `All checks passed!`, `21 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -4147,7 +4195,7 @@ Expected: 마지막 줄이 `15 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `248 passed`, `All checks passed!`, `22 files already formatted`
+Expected: 차례로 `255 passed`, `All checks passed!`, `22 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -4751,7 +4799,7 @@ Expected: 마지막 줄이 `22 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `270 passed`, `All checks passed!`, `24 files already formatted`
+Expected: 차례로 `277 passed`, `All checks passed!`, `24 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -4970,7 +5018,7 @@ Expected: 마지막 줄이 `24 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `294 passed`, `All checks passed!`, `25 files already formatted`
+Expected: 차례로 `301 passed`, `All checks passed!`, `25 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -5195,7 +5243,7 @@ Expected: 마지막 줄이 `23 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `317 passed`, `All checks passed!`, `27 files already formatted`
+Expected: 차례로 `324 passed`, `All checks passed!`, `27 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5658,7 +5706,7 @@ Expected: 마지막 줄이 `33 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `350 passed`, `All checks passed!`, `29 files already formatted`
+Expected: 차례로 `357 passed`, `All checks passed!`, `29 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6004,7 +6052,7 @@ Expected: 종료 코드 0, 출력은 아래와 같다.
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `368 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `375 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 11: 커밋한다**
 
@@ -6181,7 +6229,7 @@ python -m venv .venv
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `368 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `375 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 5: 설계의 완료 기준을 하나씩 확인한다**
 

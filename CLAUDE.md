@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 현재 상태
 
-설계 단계 저장소다. 아직 코드, 의존성 파일, 빌드·린트·테스트 명령이 없다. 전체 설계는 [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md)에 있으며, 구현을 시작할 때는 이 문서의 §11(권장 파일 구성)과 §9(PoC 단계)를 따른다. 명령어가 생기면 이 파일에 추가한다.
+단위 ①(기반 + `rag_ko.md` 어댑터)이 구현되어 있다. `rag_ko.md`와 `rag.md`를 요소 목록으로 읽고, 번역본 점검과 품질 점검을 한다. 단위 ②~⑥(LLM 게이트웨이, 체크리스트 추출, 판정, UI, 서식 검사)은 아직 없다. 전체 설계는 [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md)에 있으며, 다음 단위를 구현할 때는 이 문서의 §11(권장 파일 구성)과 §9(PoC 단계)를 따른다.
 
 목표: DOCX/PDF 문서의 양식·필수 항목 검증(Use Case A)과 한국 기준 SOP ↔ 일본 SOP 비교(Use Case B).
 
@@ -13,6 +13,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 설계 문서 이후 확정된 결정은 [docs/DECISIONS.md](docs/DECISIONS.md)에 있으며, 설계 문서와 다르면 그쪽이 우선한다. 새 결정이 나오면 거기에 추가한다.
 
 설계 문서는 검증 전 초안(v0.1)이다. 스택과 오픈소스 후보(§5)는 아직 실험하지 않았고, §12에 미결 의사결정이 남아 있다(기준의 우선순위, N/A 인정 조건과 승인자, MISSING 확정을 위한 재검토 범위 등). 구현 중 이런 정책이 필요해지면 임의로 정하지 말고 사용자에게 묻는다.
+
+## 명령어
+
+Git Bash 기준이다. PowerShell에서는 `.venv\Scripts\python`, Linux와 macOS에서는 `.venv/bin/python`을 쓴다.
+
+```bash
+# 설치
+python -m venv .venv
+.venv/Scripts/python -m pip install -e ".[dev]" -c constraints.txt
+
+# 테스트: 전체, 파일 하나, 테스트 하나
+.venv/Scripts/python -m pytest -q
+.venv/Scripts/python -m pytest tests/parsing/test_tokens.py -q
+.venv/Scripts/python -m pytest tests/parsing/test_tokens.py::test_units -q
+
+# 린트와 포맷
+.venv/Scripts/python -m ruff check .
+.venv/Scripts/python -m ruff format .
+
+# 문서 한 건 읽기(번역본 + 원문). 한국어 기준 문서는 --original-language ko, --source 없이.
+.venv/Scripts/python -m app.parsing tests/fixtures/rag_ko/sample_bakery_sop.md --doc-id SOP-SAMPLE --version 1 --original-language vi --source tests/fixtures/rag/sample_bakery_sop.vi.md --out out/sample.json
+```
+
+- 명령줄 종료 코드는 `OK` 0, `REVIEW_REQUIRED` 1, `FAILED`와 사용법 오류 2다. 결과 파일을 쓰지 못했거나 예상하지 못한 오류가 나도 2다. 0과 1은 결과 파일을 쓴 뒤에만 나온다.
+- 결과 JSON에는 문서 본문이 들어간다. `out/` 아래에만 쓰고 커밋하지 않는다.
+- 파싱 규칙이나 토큰 규칙을 바꾸면 `app/parsing/ingest.py`의 `PARSER_VERSION`을 올린다.
+- `tests/fixtures/`의 샘플과 테스트의 기준값은 고치지 않는다. 테스트가 실패하면 코드를 고친다.
+- 사내 실행 환경은 Python 3.10.11이다(D-003). 3.10 뒤에 생긴 문법과 표준 라이브러리 기능을 쓰지 않는다. ruff의 `target-version = "py310"`이 일부를 잡아 준다.
+- 의존성 버전은 `constraints.txt`에 고정한다. 버전을 올릴 때는 Python 3.10 지원과 라이선스를 다시 확인한다(D-009).
+- 사내에서 실제 파일로 확인하는 절차는 [docs/INHOUSE_CHECK.md](docs/INHOUSE_CHECK.md)에 있다.
 
 ## 보안 (공개 저장소)
 

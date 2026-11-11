@@ -79,6 +79,8 @@ def test_a_malformed_page_marker_is_unclassified(parse, line):
         "[PAGE 9]\N{ZERO WIDTH SPACE}",
         "본문이 끝난다.[PAGE 9]",
         "## 3.1 조회 [page 9]",
+        "- [PAGE 9]",
+        "[" + chr(0x2065) + "PAGE 9]",  # a code point with no character assigned
     ],
 )
 def test_a_line_that_holds_a_page_marker_and_more_is_unclassified(parse, line):
@@ -189,6 +191,11 @@ def test_a_malformed_heading_is_unclassified(parse, line):
         "\N{BRAILLE PATTERN BLANK}",
         "\N{COMBINING GRAPHEME JOINER}",
         "\N{COMBINING ENCLOSING CIRCLE}",
+        "\N{ARABIC NUMBER SIGN}",  # a format character, though this one is drawn
+        chr(0x2065),  # no character assigned, and ignored when text is drawn
+        chr(0xE0080),  # the same, outside the basic plane
+        chr(0xFFFF),  # never a character
+        chr(0x180F),  # assigned only in newer Unicode versions, as a combining mark
     ],
 )
 @pytest.mark.parametrize("rest", ["[PAGE 9]", "### 3.1 조회", "본문이다."])
@@ -213,6 +220,51 @@ def test_a_hiding_character_is_found_behind_the_indent(parse):
     assert [finding.code for finding in findings] == ["UNCLASSIFIED_LINE"]
 
 
+def test_a_private_use_character_is_ordinary_text(parse):
+    line = chr(0xE000) + " 원료를 투입한다."  # fonts draw these, often as a bullet
+    elements, findings = parse("[PAGE 1]\n" + line)
+    assert elements[1].kind == "paragraph"
+    assert elements[1].text == line
+    assert findings == ()
+
+
+@pytest.mark.parametrize(
+    "mark",
+    [
+        "\x0b",
+        "\x0c",
+        "\x1c",
+        "\x1d",
+        "\x1e",
+        "\x85",
+        "\N{LINE SEPARATOR}",
+        "\N{PARAGRAPH SEPARATOR}",
+    ],
+)
+@pytest.mark.parametrize("rest", ["### 3.1 조회", "| 가 | 나 |", "둘째 줄이다."])
+def test_a_line_that_other_tools_would_break_in_two_is_not_interpreted(parse, mark, rest):
+    line = "첫 줄이다." + mark + rest
+    elements, findings = parse("[PAGE 8]\n## 3. 제조\n" + line + "\n문단이다.")
+    assert elements[2].kind == "unclassified"
+    assert elements[2].raw == line
+    assert elements[2].text == line  # the character is kept, not removed
+    assert [finding.code for finding in findings] == ["UNCLASSIFIED_LINE"]
+    assert findings[0].element_ids == ("e0003",)
+    assert elements[3].kind == "paragraph"
+    assert elements[3].locator.section_path == ("3",)
+
+
+def test_a_break_character_at_the_edge_of_a_line_is_trimmed_like_a_space(parse):
+    # a form feed in front of a page marker is what a page break leaves behind
+    elements, findings = parse("\x0c[PAGE 9]\N{LINE SEPARATOR}\n\x1c\n문단이다.")
+    assert [element.kind for element in elements] == ["page_marker", "paragraph"]
+    assert elements[0].page == 9
+    assert elements[0].text == "[PAGE 9]"
+    assert elements[0].raw == "\x0c[PAGE 9]\N{LINE SEPARATOR}"
+    assert elements[1].locator.line_start == 3  # the line with only \x1c is blank
+    assert findings == ()
+
+
 @pytest.mark.parametrize(
     "line",
     [
@@ -224,6 +276,16 @@ def test_a_hiding_character_is_found_behind_the_indent(parse):
         "### 3.1 \N{ZERO WIDTH SPACE}",
         "## \N{HANGUL FILLER}",
         "## \N{ZERO WIDTH SPACE}주의 사항",
+        "## **\N{ZERO WIDTH SPACE}주의** 사항",
+        "## ** \N{ZERO WIDTH SPACE}주의** 사항",
+        "### **\N{ZERO WIDTH SPACE}**3.1 조회",
+        "### ****\N{ZERO WIDTH SPACE}****3.1 조회",
+        "### 1\x1f0. 조회",  # \x1f counts as white space, and shows nothing
+        "### 3.\x1f1 조회",
+        "### 3.1\x1f조회",
+        "### 3" + chr(0x2065) + ".1 조회",
+        "### ** 3.1 조회 **",
+        "### *3.1* 조회",
     ],
 )
 def test_a_heading_that_a_hiding_character_changes_is_unclassified(parse, line):
@@ -243,6 +305,10 @@ def test_a_heading_that_a_hiding_character_changes_is_unclassified(parse, line):
         ("## " + SAN_XUAT, None, SAN_XUAT),
         ("### 3.1 조\N{ZERO WIDTH SPACE}회", "3.1", "조\N{ZERO WIDTH SPACE}회"),
         ("### 3.1\t조회", "3.1", "조회"),
+        ("### 3.1\N{NO-BREAK SPACE}조회", "3.1", "조회"),  # a space is a gap one can see
+        ("### 3.1\N{IDEOGRAPHIC SPACE}조회", "3.1", "조회"),
+        ("### 3.1 조회*", "3.1", "조회*"),
+        ("## 2 * 3 계산", "2", "* 3 계산"),
     ],
 )
 def test_a_hiding_character_away_from_the_number_leaves_the_heading_alone(

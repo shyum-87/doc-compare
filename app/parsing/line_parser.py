@@ -27,9 +27,9 @@ _HEADING_RE = re.compile(r"(#{1,6}) +(\S.*)")
 _HEADING_NUMBER_RE = re.compile(r"([0-9]+(?:\.[0-9]+)*)\.?\s+(\S.*)")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
-# characters that show nothing of their own: control and format characters, combining
-# marks, and letters that are drawn blank
-_HIDING_CATEGORIES = ("Cc", "Cf", "Mn", "Me")
+# characters that show nothing of their own: control and format characters, code points
+# with no character assigned, combining marks, and letters that are drawn blank
+_HIDING_CATEGORIES = ("Cc", "Cf", "Cn", "Mn", "Me")
 _BLANK_LETTERS = frozenset(
     "\N{HANGUL CHOSEONG FILLER}\N{HANGUL JUNGSEONG FILLER}\N{HANGUL FILLER}"
     "\N{HALFWIDTH HANGUL FILLER}\N{BRAILLE PATTERN BLANK}"
@@ -43,7 +43,7 @@ def clean_text(value: str) -> str:
 
 def _hides(char: str) -> bool:
     """True for a character that shows nothing of its own and so can hide a marker."""
-    if char.isspace():
+    if char == "\t":
         return False
     return unicodedata.category(char) in _HIDING_CATEGORIES or char in _BLANK_LETTERS
 
@@ -63,9 +63,16 @@ def _split_heading(rest: str) -> tuple[Optional[str], str]:
 
 
 def _reads_plainly(rest: str) -> bool:
-    """False when a hiding character opens the heading or changes the number read from it."""
-    seen = "".join(char for char in rest if not _hides(char))
-    return not _hides(rest[0]) and _split_heading(rest)[0] == _split_heading(seen)[0]
+    """False when a hiding character opens the heading or keeps its number from being read.
+
+    The number read from the heading must be the number that is left once the hiding
+    characters and every '*' are taken out.
+    """
+    shown = "".join(char for char in rest if not (_hides(char) or char == "*")).strip()
+    opening = rest.lstrip("* \t")[:1]
+    if any(map(_hides, opening)):
+        return False
+    return _split_heading(rest)[0] == _split_heading(shown)[0]
 
 
 class _Builder:
@@ -191,9 +198,9 @@ def parse_lines(
         if not stripped:
             continue
 
-        # a line that starts with a hiding character is not interpreted:
-        # the character would hide a marker from every rule below
-        if _hides(stripped[0]):
+        # a line that starts with a hiding character, or that holds a character other
+        # tools end a line at, is not interpreted: a marker could be hidden in it
+        if _hides(stripped[0]) or len(stripped.splitlines()) > 1:
             builder.unclassified(stripped, line_no, raw)
             continue
 

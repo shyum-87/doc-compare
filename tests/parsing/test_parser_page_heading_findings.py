@@ -77,3 +77,34 @@ def test_a_number_that_only_starts_with_the_same_digits_is_a_mismatch(parse):
 def test_findings_name_the_document_they_are_about(parse):
     _, findings = parse("문단이다.", variant="translated")
     assert [finding.document for finding in findings] == ["translated"]
+
+
+def test_every_finding_names_the_document_it_is_about(parse):
+    text = "문단이다.\n[PAGE 2]\n## 3. 제조\n### 4.1 조회\n[PAGE 1]"
+    for variant in ("source", "translated"):
+        _, findings = parse(text, variant=variant)
+        assert _codes(findings) == [
+            "CONTENT_BEFORE_FIRST_PAGE",
+            "HEADING_NUMBER_MISMATCH",
+            "PAGE_NUMBER_NOT_INCREASING",
+        ]
+        assert {finding.document for finding in findings} == {variant}
+
+
+def test_a_mismatched_heading_still_opens_its_section(parse):
+    elements, findings = parse("[PAGE 1]\n## 3. 제조\n### 4.1 조회\n문단이다.")
+    assert _codes(findings) == ["HEADING_NUMBER_MISMATCH"]
+    assert elements[2].number == "4.1"  # kept as written: nothing is corrected
+    assert elements[2].locator.section_path == ("3", "4.1")
+    assert elements[3].locator.section_path == ("3", "4.1")
+
+
+def test_a_heading_under_a_parent_without_a_number_is_not_compared(parse):
+    _, findings = parse("[PAGE 1]\n## 3. 제조\n### 보관\n#### 9.1 기간")
+    assert findings == ()
+
+
+def test_a_page_number_is_compared_with_the_marker_before_it_only(parse):
+    _, findings = parse("[PAGE 3]\n가.\n[PAGE 1]\n나.\n[PAGE 2]\n다.")
+    assert _codes(findings) == ["PAGE_NUMBER_NOT_INCREASING"]
+    assert findings[0].element_ids == ("e0003",)

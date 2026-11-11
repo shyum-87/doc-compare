@@ -7,6 +7,7 @@ AI 기반 **문서 형식·필수 항목 검증** 및 **한국–일본 SOP 비�
 - [시스템 설계·브레인스토밍 종합 (docs/SYSTEM_DESIGN.md)](docs/SYSTEM_DESIGN.md)
 - [설계 문서 이후의 결정 (docs/DECISIONS.md)](docs/DECISIONS.md)
 - [단위 ① 설계: 기반 + `rag_ko.md` 어댑터](docs/superpowers/specs/2026-11-11-foundation-rag-adapter-design.md)
+- [사내 작업 순서 안내: 저장소를 받은 뒤 할 일 (docs/INHOUSE_GUIDE.md)](docs/INHOUSE_GUIDE.md)
 
 > 시스템 설계 문서와 아래 "지향하는 MVP"는 초안이다. 그 뒤에 정한 내용은 `docs/DECISIONS.md`에 있고, 서로 다르면 그쪽이 우선한다. 이 저장소는 DOCX/PDF를 직접 파싱하지 않고 외부 변환 파이프라인이 만든 `rag_ko.md`를 읽는다(D-004). 비교 대상 문서는 대부분 베트남어, 영어, 중국어다(D-011). 기준 문서에서 체크리스트를 뽑아 대상 문서에 모두 반영되었는지 확인한다(D-012).
 

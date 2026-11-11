@@ -42,7 +42,7 @@ python -m venv .venv
 - `tests/fixtures/`의 샘플과 테스트의 기준값은 고치지 않는다. 테스트가 실패하면 코드를 고친다.
 - 사내 실행 환경은 Python 3.10.11이다(D-003). 3.10 뒤에 생긴 문법과 표준 라이브러리 기능을 쓰지 않는다. ruff의 `target-version = "py310"`이 일부를 잡아 준다.
 - 의존성 버전은 `constraints.txt`에 고정한다. 버전을 올릴 때는 Python 3.10 지원과 라이선스를 다시 확인한다(D-009).
-- 사내에서 실제 파일로 확인하는 절차는 [docs/INHOUSE_CHECK.md](docs/INHOUSE_CHECK.md)에 있다.
+- 사내에서 실제 파일로 확인하는 절차는 [docs/INHOUSE_CHECK.md](docs/INHOUSE_CHECK.md)에, 저장소를 받은 뒤의 전체 순서는 [docs/INHOUSE_GUIDE.md](docs/INHOUSE_GUIDE.md)에 있다.
 
 ## 보안 (공개 저장소)
 

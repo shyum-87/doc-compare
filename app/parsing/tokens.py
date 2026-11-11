@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Optional
+from typing import Callable, Optional
 
 from app.models.document import Language
 
@@ -188,3 +189,74 @@ def extract_tokens(text: str, language: Language) -> Tokens:
         else:
             position += 1
     return Tokens(numbers=tuple(numbers), others=tuple(others))
+
+
+@dataclass(frozen=True)
+class TokenDiff:
+    missing: tuple[str, ...]  # in the source, not in the translation
+    extra: tuple[str, ...]  # in the translation, not in the source
+    ambiguous_translated: bool
+    ambiguous_source: bool
+
+    @property
+    def is_match(self) -> bool:
+        return not self.missing and not self.extra
+
+
+def _fits(token: NumberToken) -> bool:
+    return token.value is not None
+
+
+def _unfit(token: NumberToken) -> bool:
+    return token.value is None
+
+
+def _value(token: NumberToken) -> object:
+    return token.value
+
+
+def _raw(token: NumberToken) -> object:
+    return token.raw
+
+
+def _cancel(
+    left: list[NumberToken],
+    right: list[NumberToken],
+    left_ok: Callable[[NumberToken], bool],
+    right_ok: Callable[[NumberToken], bool],
+    key: Callable[[NumberToken], object],
+) -> None:
+    """Remove pairs (one from each list) that pass the filters and share a key."""
+    for token in list(left):
+        if not left_ok(token):
+            continue
+        for candidate in right:
+            if right_ok(candidate) and key(candidate) == key(token):
+                left.remove(token)
+                right.remove(candidate)
+                break
+
+
+def compare_tokens(translated: Tokens, source: Tokens) -> TokenDiff:
+    left = list(translated.numbers)
+    right = list(source.numbers)
+    # 1. both sides fit their own notation: compare by value
+    _cancel(left, right, _fits, _fits, _value)
+    # 2. at least one side does not fit: compare as strings
+    _cancel(left, right, _unfit, _unfit, _raw)
+    _cancel(left, right, _unfit, _fits, _raw)
+    _cancel(left, right, _fits, _unfit, _raw)
+    # 3. whatever is left is a mismatch
+
+    other_left = Counter(translated.others)
+    other_right = Counter(source.others)
+    missing = ["num:" + token.raw for token in right]
+    missing += sorted((other_right - other_left).elements())
+    extra = ["num:" + token.raw for token in left]
+    extra += sorted((other_left - other_right).elements())
+    return TokenDiff(
+        missing=tuple(missing),
+        extra=tuple(extra),
+        ambiguous_translated=any(_unfit(token) for token in left),
+        ambiguous_source=any(_unfit(token) for token in right),
+    )

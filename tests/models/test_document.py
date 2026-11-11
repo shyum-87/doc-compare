@@ -80,3 +80,28 @@ def test_an_element_of_unknown_kind_is_rejected():
     data["elements"][0]["kind"] = "footnote"
     with pytest.raises(ValidationError):
         Document.model_validate(data)
+
+
+@pytest.mark.parametrize(("line_start", "line_end"), [(0, 1), (-2, 3), (1, 0), (5, 2)])
+def test_a_locator_rejects_impossible_line_numbers(line_start, line_end):
+    with pytest.raises(ValidationError):
+        _locator(line_start, line_end)
+
+
+def test_an_element_needs_an_id():
+    with pytest.raises(ValidationError):
+        Paragraph(element_id="", locator=_locator(1, 1), raw="문장", text="문장")
+
+
+def test_a_table_cell_must_sit_where_it_says():
+    data = _document().model_dump()
+    data["elements"][1]["rows"][0][1]["col"] = 9
+    with pytest.raises(ValidationError):
+        Document.model_validate(data)
+
+
+def test_two_elements_cannot_share_an_id():
+    data = _document().model_dump()
+    data["elements"][1]["element_id"] = "e0001"
+    with pytest.raises(ValidationError):
+        Document.model_validate(data)

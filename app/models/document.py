@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Language = Literal["ko", "vi", "en", "zh"]
 Variant = Literal["translated", "source"]
@@ -17,12 +17,18 @@ class FrozenModel(BaseModel):
 class Locator(FrozenModel):
     page: Optional[int]
     section_path: tuple[str, ...]
-    line_start: int
-    line_end: int
+    line_start: int = Field(ge=1)
+    line_end: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def _lines_are_in_order(self) -> Locator:
+        if self.line_end < self.line_start:
+            raise ValueError("line_end is before line_start")
+        return self
 
 
 class ElementBase(FrozenModel):
-    element_id: str
+    element_id: str = Field(min_length=1)
     locator: Locator
     raw: str
     text: str
@@ -61,6 +67,14 @@ class Table(ElementBase):
     header: tuple[str, ...]
     rows: tuple[tuple[TableCell, ...], ...]
 
+    @model_validator(mode="after")
+    def _cells_know_their_position(self) -> Table:
+        for r, cells in enumerate(self.rows, start=1):
+            for c, cell in enumerate(cells, start=1):
+                if (cell.row, cell.col) != (r, c):
+                    raise ValueError(f"the cell at row {r}, column {c} is numbered differently")
+        return self
+
 
 class Image(ElementBase):
     kind: Literal["image"] = "image"
@@ -87,6 +101,15 @@ class Document(FrozenModel):
     file_name: str
     sha256: str
     elements: tuple[Element, ...]
+
+    @model_validator(mode="after")
+    def _element_ids_are_unique(self) -> Document:
+        seen: set[str] = set()
+        for element in self.elements:
+            if element.element_id in seen:
+                raise ValueError(f"element_id {element.element_id} is used twice")
+            seen.add(element.element_id)
+        return self
 
 
 def element_id_for(index: int) -> str:

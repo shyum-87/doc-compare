@@ -51,6 +51,10 @@ _BLANK_LETTERS = frozenset(
 )
 
 
+class LineCoverageError(Exception):
+    """A non-blank line belongs to no element or to more than one. Internal error."""
+
+
 def clean_text(value: str) -> str:
     """Strip paired ** and turn <br> into newlines. Characters are never changed."""
     return _BR_RE.sub("\n", _BOLD_RE.sub(r"\1", value))
@@ -414,3 +418,17 @@ def parse_lines(
     if not builder.seen_page_marker:
         builder.findings.append(new_finding("NO_PAGE_MARKER", variant))
     return tuple(builder.elements), tuple(builder.findings)
+
+
+def verify_line_coverage(lines: tuple[str, ...], elements: tuple[Element, ...]) -> None:
+    """Every non-blank line must belong to exactly one element; blank lines to none."""
+    owners = [0] * (len(lines) + 1)
+    for element in elements:
+        for line_no in range(element.locator.line_start, element.locator.line_end + 1):
+            if not 1 <= line_no <= len(lines):
+                raise LineCoverageError(f"{element.element_id} points outside the file")
+            owners[line_no] += 1
+    for line_no, line in enumerate(lines, start=1):
+        expected = 1 if line.strip() else 0
+        if owners[line_no] != expected:
+            raise LineCoverageError(f"line {line_no} is owned by {owners[line_no]} elements")

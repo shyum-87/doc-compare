@@ -97,6 +97,7 @@
 - 글자나 숫자 뒤가 아닌 자리에서 숫자 바로 앞에 온 `.`은 숫자에 붙인다(`.5`). 이런 숫자는 어느 표기에도 맞지 않아 적힌 그대로 비교한다. `,`는 붙이지 않는다.
 - `ml`과 `l`은 단위 표의 `mL`과 `L`로 읽는다(`UNIT_SPELLINGS`). NFKC가 `㎖`를 `ml`로, `ℓ`를 `l`로 바꾼다.
 - 코드 구간은 ASCII 영문자에서 시작한다. `Bánh1`에서는 `nh1`이 코드로 나온다. 양쪽 문서에 같은 글자가 있으면 일치하고, 한쪽에만 있으면 불일치로 드러나므로 그대로 둔다.
+- 값으로 비교하는 단계(설계 §6.3의 1)의 결과는 숫자가 적힌 순서에 달리지 않는다. 한쪽이 같은 값을 여러 표기로 적었으면(`1.0`과 `1`) 상대 쪽의 표기에 맞지 않는 숫자와 문자열이 같은 표기를 그 숫자의 개수만큼 마지막에 지운다. 먼저 지우면 문자열로 비교할 짝이 사라져, 같은 문서 쌍이 적힌 순서에 따라 일치이기도 하고 불일치이기도 하다. 값이 문자열보다 먼저라는 순서는 그대로다(한국어와 베트남어 양쪽이 `1.5 kg, 1,5 kg`이면 불일치다).
 
 **번역본 점검**
 
@@ -5469,6 +5470,99 @@ def test_an_unmatched_number_that_does_not_fit_is_marked_ambiguous():
 
 def test_text_without_tokens_matches():
     assert _diff("원료를 확인한다.", "Check the raw material.", "en").is_match
+
+
+def test_a_token_on_one_side_only_is_not_a_match():
+    added = _diff("2회, 3회", "2 times", "en")
+    assert (added.missing, added.extra) == ((), ("num:3",))
+    assert not added.is_match
+    dropped = _diff("2회", "2 times, 3 times", "en")
+    assert (dropped.missing, dropped.extra) == (("num:3",), ())
+    assert not dropped.is_match
+
+
+def test_different_numbers_that_fit_no_notation_do_not_match():
+    diff = _diff("1,5 kg", "2,5 kg", "en")
+    assert diff.missing == ("num:2,5",)
+    assert diff.extra == ("num:1,5",)
+    assert diff.ambiguous_translated
+    assert diff.ambiguous_source
+    assert not _diff(".5", "1.2.3", "en").is_match
+
+
+def test_a_number_that_fits_the_source_only_is_compared_as_a_string():
+    assert _diff("1,5", "1,5", "vi").is_match  # Vietnamese notation kept in the translation
+
+
+def test_the_same_value_in_another_spelling_matches():
+    assert _diff("1 kg", "1.0 kg", "en").is_match
+    assert _diff("1.50", "1.5", "en").is_match
+
+
+def test_a_source_number_is_cancelled_once():
+    diff = _diff("2회, 3회", "2 times, 3 times, 2 times", "en")
+    assert diff.missing == ("num:2",)
+    assert diff.extra == ()
+
+
+def test_numbers_compared_as_strings_are_counted():
+    diff = _diff("1,5", "1,5, 7, 1,5", "en")
+    assert diff.missing == ("num:7", "num:1,5")
+    assert diff.extra == ()
+
+
+def test_units_signs_and_codes_are_counted():
+    assert _diff("5 kg, 5", "5 kg, 5 kg", "en").missing == ("unit:kg",)
+    assert _diff("5 kg, 5 kg", "5 kg, 5", "en").extra == ("unit:kg",)
+    assert _diff("-5, 5", "-5, -5", "en").missing == ("sym:neg",)
+    assert _diff("BK01, BK01", "BK01", "en").extra == ("code:BK01",)
+    assert _diff("5, 5", "5 kg, 5 kg", "en").missing == ("unit:kg", "unit:kg")
+
+
+def test_the_report_lists_numbers_as_they_come_and_then_the_rest_sorted():
+    listed = ("num:9", "num:3", "num:7", "code:A1", "code:B2", "sym:neg", "unit:kg", "unit:mm")
+    assert _diff("없음", "9 kg, 3 mm, B2, A1, -7", "en").missing == listed
+    assert _diff("9 kg, 3 mm, B2, A1, -7", "none", "en").extra == listed
+
+
+def test_one_unfit_number_among_the_unmatched_is_enough_for_ambiguous():
+    diff = _diff("7, 1,5", "8, 2,5", "en")
+    assert diff.ambiguous_translated
+    assert diff.ambiguous_source
+
+
+def test_value_comes_before_spelling():
+    # '1.5' (ko) and '1,5' (vi) cancel by value; what is left differs in spelling
+    diff = _diff("1.5 kg, 1,5 kg", "1.5 kg, 1,5 kg", "vi")
+    assert diff.missing == ("num:1.5",)
+    assert diff.extra == ("num:1,5",)
+
+
+def test_the_order_of_two_spellings_of_one_value_does_not_matter():
+    # '1.0' is not Vietnamese notation: it is compared as written, the '1' by value
+    source = "Thêm 1.0 kg, khuấy 1 lần"
+    assert _diff("1.0 kg 투입, 1회 교반", source, "vi").is_match
+    assert _diff("1회 교반 후 1.0 kg 투입", source, "vi").is_match
+    # the same from the other side: '1,0' is not Korean notation
+    source = "Thêm 1,0 kg, khuấy 1 lần"
+    assert _diff("1,0 kg 투입, 1회 교반", source, "vi").is_match
+    assert _diff("1회 교반 후 1,0 kg 투입", source, "vi").is_match
+
+
+def test_a_spelling_is_held_back_only_as_often_as_it_is_needed():
+    # one '1.0' goes by value with the '1'; the other '1.0' and the '1.00' go as written
+    assert _diff("1.00, 1.0, 1.0", "1.0, 1.00, 1", "vi").is_match
+    assert _diff("1.0, 1.0, 1.00", "1, 1.00, 1.0", "vi").is_match
+    assert _diff("1,0, 1,00, 1", "1,00, 1,0, 1,0", "vi").is_match
+
+
+def test_what_is_left_over_is_counted_the_same_in_any_order():
+    # the one '1' takes a spelling by value; the other side keeps one that nothing pairs
+    diff = _diff("1.0, 1.00", "1.0, 1.00, 1", "vi")
+    assert (diff.missing, diff.extra) == (("num:1.0",), ())
+    diff = _diff("1.00, 1.0", "1.0, 1.00, 1", "vi")
+    assert (diff.missing, diff.extra) == (("num:1.00",), ())
+    assert diff.ambiguous_source
 ```
 
 - [ ] **Step 2: 테스트가 실패하는지 확인한다**
@@ -5487,7 +5581,7 @@ E   ImportError: cannot import name 'compare_tokens' from 'app.parsing.tokens'
 이 단계에서 바뀌는 것:
 
 - `TokenDiff`가 생긴다. `missing`은 원문에 있는데 번역본에 없는 토큰, `extra`는 번역본에만 있는 토큰이다. 표기에 맞지 않아 남은 숫자가 어느 쪽에 있는지도 갖는다.
-- `compare_tokens(translated, source)`가 생긴다. 숫자는 ① 양쪽 모두 표기에 맞는 것끼리 값으로 지우고 ② 남은 것 중 한쪽이라도 표기에 맞지 않는 것을 문자열로 지우고 ③ 그래도 남으면 불일치다. 단위, 기호, 코드는 개수를 세어 비교한다.
+- `compare_tokens(translated, source)`가 생긴다. 숫자는 ① 양쪽 모두 표기에 맞는 것끼리 값으로 지우고(`_cancel_by_value`. 같은 값의 표기가 여럿이면 상대 쪽의 표기에 맞지 않는 숫자와 문자열이 같은 것을 마지막에 지워, 결과가 숫자의 순서에 달리지 않게 한다) ② 남은 것 중 한쪽이라도 표기에 맞지 않는 것을 문자열로 지우고 ③ 그래도 남으면 불일치다. 단위, 기호, 코드는 개수를 세어 비교한다.
 
 `app/parsing/tokens.py` 전체를 아래 내용으로 바꾼다. 이것이 이 파일의 최종 모습이다:
 
@@ -5705,27 +5799,50 @@ def _unfit(token: NumberToken) -> bool:
     return token.value is None
 
 
-def _value(token: NumberToken) -> object:
-    return token.value
+def _cancel_by_value(left: list[NumberToken], right: list[NumberToken]) -> None:
+    """Remove pairs (one from each list) that both fit their notation and share a value.
+
+    One side may write a value in several ways ('1.0' and '1'). A spelling that the other
+    side holds as a number that fits no notation is cancelled last, so that step 2 can
+    still pair it as written. Otherwise the result would depend on the order of the numbers.
+    """
+    shared = Counter(token.value for token in left if _fits(token)) & Counter(
+        token.value for token in right if _fits(token)
+    )
+    for mine, theirs in ((left, right), (right, left)):
+        wanted = Counter(token.raw for token in theirs if _unfit(token))
+        first: list[int] = []
+        last: list[int] = []
+        for index, token in enumerate(mine):
+            if _unfit(token):
+                continue
+            if wanted[token.raw] > 0:
+                wanted[token.raw] -= 1
+                last.append(index)
+            else:
+                first.append(index)
+        todo = Counter(shared)
+        gone: set[int] = set()
+        for index in first + last:
+            value = mine[index].value
+            if todo[value] > 0:
+                todo[value] -= 1
+                gone.add(index)
+        mine[:] = [token for index, token in enumerate(mine) if index not in gone]
 
 
-def _raw(token: NumberToken) -> object:
-    return token.raw
-
-
-def _cancel(
+def _cancel_as_written(
     left: list[NumberToken],
     right: list[NumberToken],
     left_ok: Callable[[NumberToken], bool],
     right_ok: Callable[[NumberToken], bool],
-    key: Callable[[NumberToken], object],
 ) -> None:
-    """Remove pairs (one from each list) that pass the filters and share a key."""
+    """Remove pairs (one from each list) that pass the filters and are written alike."""
     for token in list(left):
         if not left_ok(token):
             continue
         for candidate in right:
-            if right_ok(candidate) and key(candidate) == key(token):
+            if right_ok(candidate) and candidate.raw == token.raw:
                 left.remove(token)
                 right.remove(candidate)
                 break
@@ -5735,11 +5852,11 @@ def compare_tokens(translated: Tokens, source: Tokens) -> TokenDiff:
     left = list(translated.numbers)
     right = list(source.numbers)
     # 1. both sides fit their own notation: compare by value
-    _cancel(left, right, _fits, _fits, _value)
+    _cancel_by_value(left, right)
     # 2. at least one side does not fit: compare as strings
-    _cancel(left, right, _unfit, _unfit, _raw)
-    _cancel(left, right, _unfit, _fits, _raw)
-    _cancel(left, right, _fits, _unfit, _raw)
+    _cancel_as_written(left, right, _unfit, _unfit)
+    _cancel_as_written(left, right, _unfit, _fits)
+    _cancel_as_written(left, right, _fits, _unfit)
     # 3. whatever is left is a mismatch
 
     other_left = Counter(translated.others)
@@ -5760,7 +5877,7 @@ def compare_tokens(translated: Tokens, source: Tokens) -> TokenDiff:
 
 Run: `.venv/Scripts/python -m pytest tests/parsing/test_token_compare.py -q`
 
-Expected: 마지막 줄이 `15 passed`
+Expected: 마지막 줄이 `28 passed`
 
 - [ ] **Step 5: 전체 검사를 돌린다**
 
@@ -5770,7 +5887,7 @@ Expected: 마지막 줄이 `15 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `770 passed`, `All checks passed!`, `22 files already formatted`
+Expected: 차례로 `783 passed`, `All checks passed!`, `22 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6374,7 +6491,7 @@ Expected: 마지막 줄이 `22 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `792 passed`, `All checks passed!`, `24 files already formatted`
+Expected: 차례로 `805 passed`, `All checks passed!`, `24 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6593,7 +6710,7 @@ Expected: 마지막 줄이 `24 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `816 passed`, `All checks passed!`, `25 files already formatted`
+Expected: 차례로 `829 passed`, `All checks passed!`, `25 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -6818,7 +6935,7 @@ Expected: 마지막 줄이 `23 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `839 passed`, `All checks passed!`, `27 files already formatted`
+Expected: 차례로 `852 passed`, `All checks passed!`, `27 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -7281,7 +7398,7 @@ Expected: 마지막 줄이 `33 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `872 passed`, `All checks passed!`, `29 files already formatted`
+Expected: 차례로 `885 passed`, `All checks passed!`, `29 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -7627,7 +7744,7 @@ Expected: 종료 코드 0, 출력은 아래와 같다.
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `890 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `903 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 11: 커밋한다**
 
@@ -7804,7 +7921,7 @@ python -m venv .venv
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `890 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `903 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 5: 설계의 완료 기준을 하나씩 확인한다**
 

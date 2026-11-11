@@ -24,6 +24,20 @@ RUN_LOG = [
     ("app.parsing.ingest", "INFO", "status: OK"),
     ("app.parsing.ingest", "INFO", "findings: IMAGE_PRESENT=6"),
 ]
+# the same sample read as a translation without its source
+REVIEW_LOG = [
+    ("app.parsing.ingest", "INFO", "read the translated file: 114 lines, 49 elements"),
+    ("app.parsing.ingest", "INFO", "status: REVIEW_REQUIRED"),
+    ("app.parsing.ingest", "INFO", "findings: IMAGE_PRESENT=3, SOURCE_NOT_PROVIDED=1"),
+]
+# a translated file that is not there
+FAILED_LOG = [
+    ("app.parsing.ingest", "ERROR", "cannot read the translated file: FILE_UNREADABLE"),
+]
+
+
+class Odd(Exception):
+    """An error of no built-in type: every Exception is caught, not a list of types."""
 
 
 def _args(main_file, out, language="ko", source=None):
@@ -154,9 +168,9 @@ def test_an_output_directory_that_cannot_be_made_exits_with_2(tmp_path, caplog, 
     assert blocker.read_text(encoding="utf-8") == "a file where the directory should be"
 
 
-@pytest.mark.parametrize("error", [OSError, RuntimeError, ValueError])
+@pytest.mark.parametrize("error", [OSError, RuntimeError, ValueError, Odd])
 def test_any_error_while_writing_exits_with_2_and_logs_its_type_only(
-    tmp_path, caplog, monkeypatch, ko_sample, source_samples, error
+    tmp_path, caplog, capsys, monkeypatch, ko_sample, source_samples, error
 ):
     def explode(self, data):
         raise error(f"비밀 문장 {self}")
@@ -170,21 +184,23 @@ def test_any_error_while_writing_exits_with_2_and_logs_its_type_only(
         ("app.parsing", "ERROR", f"cannot write the result file: {error.__name__}"),
     ]
     assert "비밀 문장" not in caplog.text  # no message and no traceback of the error
+    assert "비밀 문장" not in capsys.readouterr().err  # and none printed past the log
     assert not out.exists()
 
 
 def test_an_unexpected_error_exits_with_2_and_logs_its_type_only(
-    tmp_path, caplog, monkeypatch, ko_sample
+    tmp_path, caplog, capsys, monkeypatch, ko_sample
 ):
     def explode(*args, **kwargs):
-        raise RuntimeError("비밀 문장")
+        raise Odd("비밀 문장")
 
     monkeypatch.setattr("app.parsing.__main__.ingest", explode)
     out = tmp_path / "result.json"
     with caplog.at_level(logging.DEBUG):
         assert main(_args(ko_sample, out)) == 2  # not 1: no result file says what to review
-    assert _records(caplog) == [("app.parsing", "ERROR", "internal error: RuntimeError")]
+    assert _records(caplog) == [("app.parsing", "ERROR", "internal error: Odd")]
     assert "비밀 문장" not in caplog.text
+    assert "비밀 문장" not in capsys.readouterr().err
     assert not out.exists()
 
 
@@ -273,12 +289,20 @@ def test_the_languages_are_those_of_the_document_model(tmp_path, ko_sample):
         assert args.original_language == language
 
 
-def test_the_log_of_a_run_holds_counts_and_codes_only(tmp_path, caplog, ko_sample, source_samples):
+@pytest.mark.parametrize("status", get_args(Status))
+def test_the_log_of_a_run_holds_counts_and_codes_only(
+    tmp_path, caplog, ko_sample, source_samples, status
+):
     out = tmp_path / "result.json"
+    args, expected = {
+        "OK": (_args(ko_sample, out, "en", source_samples["en"]), RUN_LOG),
+        "REVIEW_REQUIRED": (_args(ko_sample, out, "vi"), REVIEW_LOG),
+        "FAILED": (_args(tmp_path / "missing.md", out, "vi"), FAILED_LOG),
+    }[status]
     with caplog.at_level(logging.DEBUG):
-        assert main(_args(ko_sample, out, "en", source_samples["en"])) == 0
+        assert main(args) == EXIT_CODES[status]
     # the whole log: a line with a path, a document ID or text of a document would show here
-    assert _records(caplog) == RUN_LOG
+    assert _records(caplog) == expected
 
 
 def test_logs_carry_no_document_text(tmp_path, caplog, ko_sample, source_samples):

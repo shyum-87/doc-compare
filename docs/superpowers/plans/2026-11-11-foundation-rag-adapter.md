@@ -4443,6 +4443,8 @@ git push -u origin main
 | `ko`, `en`, `zh` | `.` | `,` |
 | `vi` | `,` | `.` |
 
+천 단위 구분 앞의 첫 묶음은 숫자 1~3개이고 `0`으로 시작하지 않는다. 베트남어 `0.500`과 영어 `0,125`는 표기에 맞지 않는 숫자다(`None`). 천 단위로 읽으면 500과 125가 되어 상대편의 `500`, `125`와 값이 같아진다.
+
 **Files:**
 - Create: `app/parsing/tokens.py`
 - Test: `tests/parsing/test_number_notation.py`
@@ -4470,20 +4472,27 @@ from app.parsing.tokens import parse_number
         ("180", "ko", "180"),
         ("1.5", "ko", "1.5"),
         ("1.0", "en", "1.0"),
+        ("0.1", "ko", "0.1"),
         ("1,000", "en", "1000"),
         ("1,000", "ko", "1000"),
         ("1,000", "zh", "1000"),
+        ("123,456", "en", "123456"),
         ("10,000,000", "en", "10000000"),
         ("1,000.5", "en", "1000.5"),
+        ("1,000.1", "en", "1000.1"),
         ("1.000", "en", "1.000"),  # one, written with three decimals
         # vi: ',' is the decimal point, '.' groups thousands
         ("180", "vi", "180"),
         ("1,5", "vi", "1.5"),
         ("1,0", "vi", "1.0"),
         ("0,5", "vi", "0.5"),
+        ("0,1", "vi", "0.1"),
+        ("0,125", "vi", "0.125"),
         ("1.000", "vi", "1000"),
+        ("123.456", "vi", "123456"),
         ("1.234.567", "vi", "1234567"),
         ("1.000,25", "vi", "1000.25"),
+        ("1.000,1", "vi", "1000.1"),
         ("1,000", "vi", "1.000"),  # one, written with three decimals
     ],
 )
@@ -4504,7 +4513,50 @@ def test_numbers_that_fit_the_notation(raw, language, value):
         ("1,000.5", "vi"),
         ("10,000,000", "vi"),
         ("", "ko"),
+        ("", "vi"),
         ("abc", "ko"),
+        # a grouped number does not start with 0
+        ("0,125", "en"),
+        ("01,234", "ko"),
+        ("0.500", "vi"),
+        ("00.123", "vi"),
+        # one to three digits before the first separator, exactly three after each
+        ("1234,567", "en"),
+        ("1,0000", "en"),
+        (",123", "en"),
+        ("1234.567", "vi"),
+        ("1.0000", "vi"),
+        (".123", "vi"),
+        # the decimal mark comes once, after the groups, with digits on both sides
+        ("1.000.000", "en"),
+        ("1,000.5.5", "en"),
+        ("1,000.", "en"),
+        ("5.", "ko"),
+        (".5", "ko"),
+        ("1.000.5", "vi"),
+        ("1.000,5,5", "vi"),
+        ("1.000,", "vi"),
+        ("5,", "vi"),
+        (",5", "vi"),
+        # nothing but the digits 0-9 and the two separators
+        ("-5", "ko"),
+        ("+5", "ko"),
+        (" 5", "ko"),
+        ("5\n", "ko"),
+        ("5\n", "vi"),
+        ("1,000\n", "en"),
+        ("1.000\n", "vi"),
+        ("1e3", "en"),
+        ("1_000", "en"),
+        ("\N{FULLWIDTH DIGIT ONE}\N{FULLWIDTH DIGIT TWO}", "ko"),
+        ("\N{FULLWIDTH DIGIT ONE}\N{FULLWIDTH DIGIT TWO}", "vi"),
+        ("1.\N{FULLWIDTH DIGIT FIVE}", "ko"),
+        ("1,\N{FULLWIDTH DIGIT FIVE}", "vi"),
+        ("1,00\N{FULLWIDTH DIGIT ZERO}", "en"),
+        ("1.00\N{FULLWIDTH DIGIT ZERO}", "vi"),
+        ("1,000.\N{FULLWIDTH DIGIT FIVE}", "en"),
+        ("1.000,\N{FULLWIDTH DIGIT FIVE}", "vi"),
+        ("\N{ARABIC-INDIC DIGIT ONE}\N{ARABIC-INDIC DIGIT TWO}", "en"),
     ],
 )
 def test_numbers_that_do_not_fit_the_notation(raw, language):
@@ -4521,6 +4573,12 @@ def test_the_same_digits_mean_different_values():
 def test_values_compare_by_amount_not_by_spelling():
     assert parse_number("1,0", "vi") == parse_number("1.0", "ko")
     assert parse_number("1.50", "ko") == parse_number("1,5", "vi")
+
+
+def test_a_value_is_an_exact_decimal():
+    for raw, language in [("0.1", "ko"), ("1,000.1", "en"), ("0,1", "vi"), ("1.000,1", "vi")]:
+        assert isinstance(parse_number(raw, language), Decimal)
+    assert parse_number("0.1", "ko") + parse_number("0,2", "vi") == Decimal("0.3")
 ```
 
 - [ ] **Step 2: 테스트가 실패하는지 확인한다**
@@ -4554,16 +4612,17 @@ from typing import Optional
 from app.models.document import Language
 
 _PLAIN_DOT = re.compile(r"[0-9]+(?:\.[0-9]+)?")
-_GROUPED_DOT = re.compile(r"[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?")
+_GROUPED_DOT = re.compile(r"[1-9][0-9]{0,2}(?:,[0-9]{3})+(?:\.[0-9]+)?")
 _PLAIN_COMMA = re.compile(r"[0-9]+(?:,[0-9]+)?")
-_GROUPED_COMMA = re.compile(r"[0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]+)?")
+_GROUPED_COMMA = re.compile(r"[1-9][0-9]{0,2}(?:\.[0-9]{3})+(?:,[0-9]+)?")
 
 
 def parse_number(raw: str, language: Language) -> Optional[Decimal]:
     """Value of `raw` in the notation of `language`, or None if it does not fit.
 
     ko/en/zh: '.' decimal, ',' thousands. vi: ',' decimal, '.' thousands.
-    A thousands separator counts only when exactly three digits follow it.
+    A thousands separator counts only when exactly three digits follow it. A grouped
+    number starts with one to three digits, and the first of them is not 0.
     """
     if language == "vi":
         if _PLAIN_COMMA.fullmatch(raw):
@@ -4584,7 +4643,7 @@ def parse_number(raw: str, language: Language) -> Optional[Decimal]:
 
 Run: `.venv/Scripts/python -m pytest tests/parsing/test_number_notation.py -q`
 
-Expected: 마지막 줄이 `30 passed`
+Expected: 마지막 줄이 `77 passed`
 
 - [ ] **Step 5: 전체 검사를 돌린다**
 
@@ -4594,7 +4653,7 @@ Expected: 마지막 줄이 `30 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `445 passed`, `All checks passed!`, `20 files already formatted`
+Expected: 차례로 `492 passed`, `All checks passed!`, `20 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -4798,9 +4857,9 @@ UNITS: tuple[str, ...] = (
 _FOLD = str.maketrans({"−": "-", "〜": "~"})
 
 _PLAIN_DOT = re.compile(r"[0-9]+(?:\.[0-9]+)?")
-_GROUPED_DOT = re.compile(r"[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?")
+_GROUPED_DOT = re.compile(r"[1-9][0-9]{0,2}(?:,[0-9]{3})+(?:\.[0-9]+)?")
 _PLAIN_COMMA = re.compile(r"[0-9]+(?:,[0-9]+)?")
-_GROUPED_COMMA = re.compile(r"[0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]+)?")
+_GROUPED_COMMA = re.compile(r"[1-9][0-9]{0,2}(?:\.[0-9]{3})+(?:,[0-9]+)?")
 
 _NUMBER_RE = re.compile(r"[0-9]+(?:[.,][0-9]+)*")
 _CODE_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
@@ -4823,7 +4882,8 @@ def parse_number(raw: str, language: Language) -> Optional[Decimal]:
     """Value of `raw` in the notation of `language`, or None if it does not fit.
 
     ko/en/zh: '.' decimal, ',' thousands. vi: ',' decimal, '.' thousands.
-    A thousands separator counts only when exactly three digits follow it.
+    A thousands separator counts only when exactly three digits follow it. A grouped
+    number starts with one to three digits, and the first of them is not 0.
     """
     if language == "vi":
         if _PLAIN_COMMA.fullmatch(raw):
@@ -4919,7 +4979,7 @@ Expected: 마지막 줄이 `57 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `502 passed`, `All checks passed!`, `21 files already formatted`
+Expected: 차례로 `549 passed`, `All checks passed!`, `21 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5096,9 +5156,9 @@ UNITS: tuple[str, ...] = (
 _FOLD = str.maketrans({"−": "-", "〜": "~"})
 
 _PLAIN_DOT = re.compile(r"[0-9]+(?:\.[0-9]+)?")
-_GROUPED_DOT = re.compile(r"[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?")
+_GROUPED_DOT = re.compile(r"[1-9][0-9]{0,2}(?:,[0-9]{3})+(?:\.[0-9]+)?")
 _PLAIN_COMMA = re.compile(r"[0-9]+(?:,[0-9]+)?")
-_GROUPED_COMMA = re.compile(r"[0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]+)?")
+_GROUPED_COMMA = re.compile(r"[1-9][0-9]{0,2}(?:\.[0-9]{3})+(?:,[0-9]+)?")
 
 _NUMBER_RE = re.compile(r"[0-9]+(?:[.,][0-9]+)*")
 _CODE_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
@@ -5121,7 +5181,8 @@ def parse_number(raw: str, language: Language) -> Optional[Decimal]:
     """Value of `raw` in the notation of `language`, or None if it does not fit.
 
     ko/en/zh: '.' decimal, ',' thousands. vi: ',' decimal, '.' thousands.
-    A thousands separator counts only when exactly three digits follow it.
+    A thousands separator counts only when exactly three digits follow it. A grouped
+    number starts with one to three digits, and the first of them is not 0.
     """
     if language == "vi":
         if _PLAIN_COMMA.fullmatch(raw):
@@ -5288,7 +5349,7 @@ Expected: 마지막 줄이 `15 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `517 passed`, `All checks passed!`, `22 files already formatted`
+Expected: 차례로 `564 passed`, `All checks passed!`, `22 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5892,7 +5953,7 @@ Expected: 마지막 줄이 `22 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `539 passed`, `All checks passed!`, `24 files already formatted`
+Expected: 차례로 `586 passed`, `All checks passed!`, `24 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6111,7 +6172,7 @@ Expected: 마지막 줄이 `24 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `563 passed`, `All checks passed!`, `25 files already formatted`
+Expected: 차례로 `610 passed`, `All checks passed!`, `25 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -6336,7 +6397,7 @@ Expected: 마지막 줄이 `23 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `586 passed`, `All checks passed!`, `27 files already formatted`
+Expected: 차례로 `633 passed`, `All checks passed!`, `27 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6799,7 +6860,7 @@ Expected: 마지막 줄이 `33 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `619 passed`, `All checks passed!`, `29 files already formatted`
+Expected: 차례로 `666 passed`, `All checks passed!`, `29 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -7145,7 +7206,7 @@ Expected: 종료 코드 0, 출력은 아래와 같다.
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `637 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `684 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 11: 커밋한다**
 
@@ -7322,7 +7383,7 @@ python -m venv .venv
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `637 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `684 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 5: 설계의 완료 기준을 하나씩 확인한다**
 

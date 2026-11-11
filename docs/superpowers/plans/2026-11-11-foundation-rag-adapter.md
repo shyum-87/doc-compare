@@ -78,7 +78,12 @@
 - 헤딩에서 읽은 조항 번호는 가리는 문자와 `*`를 모두 뺀 글에서 읽은 번호와 같아야 한다. 다르거나, `*`와 공백 뒤 첫 글자가 가리는 문자면 그 줄은 미분류다(`### **<폭 없는 공백>**3.1 조회`, `### *3.1* 조회`, `### ** 3.1 조회 **`). 낱말 안의 결합 문자(분해형 베트남어 등)와 번호에서 떨어진 가리는 문자는 그대로 둔다.
 - 생김새만 비슷한 표시(전각 `［PAGE 9］`, `【PAGE 9】`, 번역된 `[페이지 9]` 등)는 접어서 읽지 않고 문단으로 둔다. 단위 ①에서는 다루지 않는다.
 - 페이지 번호와 조항 번호는 ASCII 숫자(`0`~`9`)만 인정한다. 페이지 번호는 6자리까지다. 조항 번호는 `**`를 벗긴 제목에서 읽는다(`## **3. 제조**`의 번호는 `3`).
-- 규칙 8(미분류) 중 코드 펜스(` ``` `, `~~~`), `>` 인용, 구분선(`---`, `***`, `___`), HTML 태그 줄은 규칙 6(목록 항목)보다 먼저 검사한다. 그러지 않으면 `---`와 `***`가 목록 항목으로 읽힌다.
+- 규칙 8(미분류) 중 코드 펜스(` ``` `, `~~~`), `>` 인용, 구분선(`---`, `***`, `___`과 사이에 공백을 둔 `- - -`, `* * *`, `_ _ _`), HTML 태그 줄, `<!--`로 시작하는 줄은 규칙 6(목록 항목)보다 먼저 검사한다. 그러지 않으면 `---`와 `***`가 목록 항목으로 읽힌다.
+- 이미지는 이미지 ID와 파일 이름이 모두 있어야 한다. 하나라도 비었거나 공백뿐이면 미분류다(ID가 없으면 원문과 짝지을 열쇠가 없다). 이미지가 헤딩, 표, 목록 항목, 문단 안에 적혀 있으면(`![…](`가 들어 있으면) 그 요소는 그대로 읽고 `IMAGE_PRESENT`를 그 요소에 붙인다. 이미지가 있는 줄마다 하나이며, 한 줄에 이미지가 둘이어도 하나다. 미분류 줄에는 붙이지 않는다(이미 검토 필요다).
+- 목록 번호의 숫자는 어느 문자 체계의 숫자든 받고(전각 `１)`), 표시는 적힌 그대로 저장한다.
+- 목록 표시(`1)`, `1.`, `-`, `*`)와 처음 보이는 글자 사이에 가리는 문자가 있으면 미분류다(`*`와 공백은 건너뛰고 본다). 표시가 무엇인지, `-`가 숫자의 부호인지가 보이지 않는 문자에 달리기 때문이다.
+- `숫자.` 표시 뒤의 본문이 다시 `숫자.`와 공백(또는 줄 끝)으로 시작하면 미분류다(`2024. 5. 1 개정`, `1. 2. 항목`, `1. **2. 항목**`). 날짜나 숫자 나열일 수 있고, 앞 숫자를 목록 번호로 떼어 내면 값이 사라진다. `2. 5 kg 투입`처럼 뒤 숫자에 점이 없으면 표시가 `2.`인 목록 항목이다.
+- 공백 없는 `-` 뒤에서 `*`와 공백을 건너뛴 첫 글자가 숫자이거나, `.`이나 `,`이고 그다음이 숫자이면 문단 + `AMBIGUOUS_LIST_OR_NEGATIVE`다(`-18℃`, `-**18℃**`, `-.5 kg`). 숫자는 유니코드 숫자 범주(Nd·Nl·No)의 문자다. 전각 숫자, `½`, `①`이 들어가고, 숫자를 뜻하는 한자(`三`)는 글자라서 들어가지 않는다. `-` 뒤에 보이는 글자가 없거나(`-`, `-*`, `-**`) `-`가 또 오면(`--`) 미분류다.
 - 표 발견 항목의 줄 번호는 어긋난 그 행의 줄이다.
 - 구분 줄은 적힌 그대로의 셀이 모두 `-` 하나 이상(앞뒤에 `:` 가능)인 `|` 줄이다. `**---**`처럼 굵게 적힌 대시는 구분 줄의 셀이 아니다. 구분 줄이 둘째 줄 하나뿐인 `|` 묶음만 표로 읽는다. 첫 줄이든 셋째 줄 뒤든 다른 줄이 구분 줄이면 줄마다 미분류로 둔다(표 두 개가 빈 줄 없이 붙었거나 머리글이 빠졌을 수 있고, 어느 쪽인지는 추측이다). 셀이 모두 `-`뿐인 머리글이나 데이터 행(`| - | - |`)도 구분 줄로 본다.
 - 페이지 마커가 하나 있고 다른 줄이 있으면 정상 문서다. 빈 줄뿐인 파일만 `EMPTY_DOCUMENT`다.
@@ -2628,7 +2633,7 @@ def split_table_row(line: str) -> list[str]:
 
 
 def _is_separator_row(line: str) -> bool:
-    """True for a pipe line whose every cell, as written, is dashes with optional colons."""
+    """True when every cell of the line, as written, is dashes with optional colons."""
     return all(_SEPARATOR_CELL_RE.fullmatch(cell) for cell in _cells_as_written(line))
 
 
@@ -2870,7 +2875,7 @@ git push -u origin main
 
 ### Task 8: 파서 — 이미지, 목록 항목, 미분류
 
-설계 §5의 규칙 5, 6, 8과 §5.2의 첫 행. 이미지는 항상 `IMAGE_PRESENT`(참고)를 낸다. 공백 없는 `-` 뒤에 숫자가 오는 줄은 목록인지 음수인지 정하지 않고 문단으로 두며 `AMBIGUOUS_LIST_OR_NEGATIVE`를 낸다.
+설계 §5의 규칙 5, 6, 8과 §5.2의 첫 네 행. 이미지는 항상 `IMAGE_PRESENT`(참고)를 낸다. 다른 요소 안에 적힌 이미지도 그 요소에 낸다. 공백 없는 `-` 뒤에 숫자가 오는 줄은 목록인지 음수인지 정하지 않고 문단으로 두며 `AMBIGUOUS_LIST_OR_NEGATIVE`를 낸다. 목록 표시 옆에 가리는 문자가 있는 줄과 `숫자.` 뒤에 `숫자.`가 또 오는 줄은 미분류로 둔다.
 
 **Files:**
 - Modify: `app/parsing/line_parser.py`
@@ -2905,6 +2910,8 @@ def _codes(findings):
         ('![img021](img021.png "조회 화면")', "img021", "img021.png", "조회 화면"),
         ("![img021](img021.png)", "img021", "img021.png", ""),
         ('![img 021](<조회 화면.png "제목">)', "img 021", "조회 화면.png", "제목"),
+        ("![img021](< img021.png >)", "img021", "img021.png", ""),
+        ('![img021](<img021.png "제목" >)', "img021", "img021.png", "제목"),
     ],
 )
 def test_image(parse, line, image_id, file_name, title):
@@ -2921,12 +2928,52 @@ def test_image(parse, line, image_id, file_name, title):
 
 
 @pytest.mark.parametrize(
-    "line", ["![img021](<img021.png>) 그림 설명", "![img021]", "![img021](img 021.png)", "![]("]
+    "line",
+    [
+        "![img021](<img021.png>) 그림 설명",
+        "![img021](img021.png) 그림 설명",
+        "![img021]",
+        "![img021](img 021.png)",
+        "![](",
+        "![](img021.png)",  # no image ID: nothing to pair the image by
+        "![ ](img021.png)",
+        "![img021](< >)",  # no file name
+        "![img021](<>)",
+        "![img021](<img021.png>",
+        "![img021](img021(1).png)",  # parentheses in a file name need the <...> form
+    ],
 )
 def test_a_malformed_image_is_unclassified(parse, line):
     elements, findings = parse("[PAGE 1]\n" + line)
     assert elements[1].kind == "unclassified"
     assert _codes(findings) == ["UNCLASSIFIED_LINE"]
+
+
+@pytest.mark.parametrize(
+    "block, kind, lines",
+    [
+        ('앞 글 ![img1](<img1.png "제목">) 뒤 글', "paragraph", [2]),
+        ("- ![img1](img1.png)", "list_item", [2]),
+        ("## 3.1 화면 ![img1](img1.png)", "heading", [2]),
+        ('|단계|화면|\n|---|---|\n|1|없음|\n|2|![img1](<img1.png "제목">)|', "table", [5]),
+        ("|![a](a.png)|![b](b.png)|\n|---|---|\n|![c](c.png)|2|", "table", [2, 4]),
+    ],
+)
+def test_an_image_inside_another_element_is_reported(parse, block, kind, lines):
+    # the image is a region that is not read, wherever it stands: one finding per line
+    elements, findings = parse("[PAGE 1]\n" + block)
+    assert [element.kind for element in elements[1:]] == [kind]
+    assert _codes(findings) == ["IMAGE_PRESENT"] * len(lines)
+    assert [finding.element_ids for finding in findings] == [("e0002",)] * len(lines)
+    assert [(finding.line_start, finding.line_end) for finding in findings] == [
+        (line, line) for line in lines
+    ]
+
+
+def test_an_exclamation_mark_before_a_bracket_is_not_an_image(parse):
+    elements, findings = parse("[PAGE 1]\n주의![참고] 문서를 본다.")
+    assert elements[1].kind == "paragraph"
+    assert findings == ()
 
 
 @pytest.mark.parametrize(
@@ -2940,6 +2987,19 @@ def test_a_malformed_image_is_unclassified(parse, line):
         ("* 별표 항목", "*", "별표 항목"),
         ("-붙여 쓴 항목", "-", "붙여 쓴 항목"),
         ("  - **주의** 들여 쓴 항목", "-", "주의 들여 쓴 항목"),
+        ("-**주의** 붙여 쓴 굵은 글", "-", "주의 붙여 쓴 굵은 글"),
+        ("-\t탭 뒤 항목", "-", "탭 뒤 항목"),
+        ("*\N{IDEOGRAPHIC SPACE}전각 공백 뒤 항목", "*", "전각 공백 뒤 항목"),
+        # the marker is kept as written, so a digit of any script makes a numbered item
+        ("\N{FULLWIDTH DIGIT ONE}) 전각 숫자", "\N{FULLWIDTH DIGIT ONE})", "전각 숫자"),
+        ("\N{FULLWIDTH DIGIT TWO}. 전각 숫자와 점", "\N{FULLWIDTH DIGIT TWO}.", "전각 숫자와 점"),
+        ("2. 5 kg 투입", "2.", "5 kg 투입"),
+        ("1. 2.5 kg 투입", "1.", "2.5 kg 투입"),
+        ("1) 2. 확인한다", "1)", "2. 확인한다"),
+        ("- 2. 확인한다", "-", "2. 확인한다"),
+        ("- -18℃ 이하로 보관", "-", "-18℃ 이하로 보관"),
+        ("-三호기 점검", "-", "三호기 점검"),  # a numeral that is a letter, not a number sign
+        ("-.env 파일을 확인한다", "-", ".env 파일을 확인한다"),
     ],
 )
 def test_list_item(parse, line, marker, text):
@@ -2964,6 +3024,30 @@ def test_a_line_that_starts_with_a_number_is_a_paragraph(parse, line):
     assert findings == ()
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "1.",
+        "10)",
+        "3.2 내용",
+        "+ 더하기 표시",
+        "*강조* 문장",
+        "**굵게** 문장",
+        "***굵게*** 문장",
+        "**",
+        "__",
+        "___이름___",
+        "<3 kg 이하",
+        "<표 1> 참조",
+        "\N{MINUS SIGN}18℃ 이하로 보관",
+    ],
+)
+def test_a_line_that_only_looks_like_a_list_item_or_a_rule_is_a_paragraph(parse, line):
+    elements, findings = parse("[PAGE 1]\n" + line)
+    assert elements[1].kind == "paragraph"
+    assert findings == ()
+
+
 @pytest.mark.parametrize("line", ["-18℃ 이하로 보관한다.", "-5 ~ 0℃", "-18"])
 def test_a_hyphen_before_a_digit_is_not_decided(parse, line):
     elements, findings = parse("[PAGE 1]\n" + line)
@@ -2975,6 +3059,30 @@ def test_a_hyphen_before_a_digit_is_not_decided(parse, line):
     assert (findings[0].line_start, findings[0].line_end) == (2, 2)
 
 
+@pytest.mark.parametrize(
+    "line, text",
+    [
+        ("-**18℃** 이하로 보관", "-18℃ 이하로 보관"),
+        ("-.5 kg", "-.5 kg"),
+        ("-,5 kg", "-,5 kg"),
+        ("-**.**5 kg", "-.5 kg"),
+        ("-* 18℃ 이하로 보관", "-* 18℃ 이하로 보관"),
+        (
+            "-\N{FULLWIDTH DIGIT ONE}\N{FULLWIDTH DIGIT EIGHT}℃",
+            "-\N{FULLWIDTH DIGIT ONE}\N{FULLWIDTH DIGIT EIGHT}℃",
+        ),
+        ("-\N{VULGAR FRACTION ONE HALF} 컵", "-\N{VULGAR FRACTION ONE HALF} 컵"),
+    ],
+)
+def test_a_hyphen_before_a_number_in_another_form_is_not_decided(parse, line, text):
+    # bold marks, a decimal point with no zero, and digits of other scripts do not
+    # turn the sign into a list marker
+    elements, findings = parse("[PAGE 1]\n" + line)
+    assert elements[1].kind == "paragraph"
+    assert elements[1].text == text
+    assert _codes(findings) == ["AMBIGUOUS_LIST_OR_NEGATIVE"]
+
+
 def test_a_hyphen_a_space_and_a_digit_is_a_list_item(parse):
     elements, findings = parse("[PAGE 1]\n- 18℃ 이하로 보관한다.")
     assert elements[1].kind == "list_item"
@@ -2984,19 +3092,69 @@ def test_a_hyphen_a_space_and_a_digit_is_a_list_item(parse):
 @pytest.mark.parametrize(
     "line",
     [
+        "-\N{ZERO WIDTH SPACE}18℃ 이하로 보관",
+        "-\N{SOFT HYPHEN}18℃",
+        "-\x1f18℃ 이하로 보관",  # a control character that a regular expression takes for a space
+        "-**\N{ZERO WIDTH SPACE}18℃**",
+        "1.\x1f5 kg 투입",
+        "2)\N{ZERO WIDTH SPACE}조회한다",
+        "- \N{WORD JOINER}항목",
+        "*\x1f항목",
+    ],
+)
+def test_a_hiding_character_next_to_a_list_marker_leaves_the_line_unclassified(parse, line):
+    # what the marker is, and whether a sign belongs to a number, would hang on a
+    # character that is not seen
+    elements, findings = parse("[PAGE 1]\n" + line)
+    assert elements[1].kind == "unclassified"
+    assert elements[1].text == line
+    assert _codes(findings) == ["UNCLASSIFIED_LINE"]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "2024. 5. 1 개정",
+        "1. 2. 항목",
+        "3. 4.",
+        "1. **2. 항목**",
+        "1. \N{FULLWIDTH DIGIT TWO}. 항목",
+    ],
+)
+def test_a_number_and_dot_after_a_number_and_dot_is_not_read_as_a_list_item(parse, line):
+    # a date or a run of numbers: the first number is not taken for a list marker
+    elements, findings = parse("[PAGE 1]\n" + line)
+    assert elements[1].kind == "unclassified"
+    assert elements[1].text == line
+    assert _codes(findings) == ["UNCLASSIFIED_LINE"]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
         "```",
         "```python",
         "~~~",
         "> 인용문",
+        ">붙여 쓴 인용문",
         "---",
         "***",
+        "___",
         "_____",
+        "- - -",
+        "* * *",
+        "_ _ _",
         "<div>",
         "</table>",
         '<img src="a.png">',
+        "<br>로 시작하는 줄",
+        "<b>주의</b> 굵게 적은 줄",
+        "<!-- 주석 -->",
         "-",
         "--",
         "-- 두 줄표",
+        "-*",
+        "-**",
     ],
 )
 def test_structural_lines_that_are_not_interpreted(parse, line):
@@ -3028,7 +3186,7 @@ FAILED tests/parsing/test_parser_blocks.py::test_a_hyphen_before_a_digit_is_not_
 FAILED tests/parsing/test_parser_blocks.py::test_a_hyphen_a_space_and_a_digit_is_a_list_item
 FAILED tests/parsing/test_parser_blocks.py::test_structural_lines_that_are_not_interpreted
 FAILED tests/parsing/test_parser_blocks.py::test_an_unclassified_line_does_not_hide_its_neighbours
-36 failed, 3 passed
+92 failed, 17 passed
 ```
 
 - [ ] **Step 3: 파서를 고친다**
@@ -3036,9 +3194,11 @@ FAILED tests/parsing/test_parser_blocks.py::test_an_unclassified_line_does_not_h
 이 단계에서 바뀌는 것:
 
 - `_Builder.image()`와 `_Builder.list_item()`이 생긴다. `paragraph()`는 만든 요소를 돌려준다(발견 항목을 붙이기 위해서다).
-- `parse_lines()`에 규칙 5(이미지)가 들어간다. `![`로 시작하지만 두 형식 어느 쪽에도 맞지 않으면 미분류다.
-- 규칙 8 중 코드 펜스, `>` 인용, 구분선, HTML 태그 줄을 목록 규칙보다 먼저 검사한다. `---`와 `***`가 목록 항목으로 읽히지 않게 하기 위해서다.
-- 규칙 6(목록 항목)이 들어간다. `1)`, `1. `, `- `, `* `, 공백 없는 `-글자`다. `-` 뒤가 숫자이면 문단 + `AMBIGUOUS_LIST_OR_NEGATIVE`, `-`만 있거나 `--`이면 미분류다.
+- `_Builder.add()`가 이미지와 미분류가 아닌 요소의 줄마다 `![…](`가 있는지 보고, 있으면 그 줄 번호로 `IMAGE_PRESENT`를 붙인다.
+- `parse_lines()`에 규칙 5(이미지)가 들어간다. `![`로 시작하지만 두 형식 어느 쪽에도 맞지 않거나, 이미지 ID나 파일 이름이 비어 있으면 미분류다.
+- 규칙 8 중 코드 펜스, `>` 인용, 구분선(공백을 둔 `- - -`, `* * *` 포함), HTML 태그 줄, `<!--` 줄을 목록 규칙보다 먼저 검사한다. `---`와 `***`가 목록 항목으로 읽히지 않게 하기 위해서다.
+- `_starts_hidden()`과 `_is_number()`가 생긴다. 앞의 것은 `*`와 공백을 건너뛴 첫 글자가 가리는 문자인지, 뒤의 것은 글자가 유니코드 숫자 범주인지 본다.
+- 규칙 6(목록 항목)이 들어간다. `1)`, `1. `, `- `, `* `, 공백 없는 `-글자`다. 표시 옆에 가리는 문자가 있거나 `숫자.` 뒤에 `숫자.`가 또 오면 미분류다. 공백 없는 `-` 뒤가 숫자이면(`*`와 공백을 건너뛰고, `.5`와 `,5`도 포함) 문단 + `AMBIGUOUS_LIST_OR_NEGATIVE`, `-` 뒤에 보이는 글자가 없거나 `--`이면 미분류다.
 
 `app/parsing/line_parser.py` 전체를 아래 내용으로 바꾼다:
 
@@ -3078,10 +3238,12 @@ _SEPARATOR_CELL_RE = re.compile(r":?-+:?")
 _CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
 _IMAGE_ANGLE_RE = re.compile(r'!\[([^\]]*)\]\(<([^">]+?)(?:\s+"([^"]*)")?\s*>\)')
 _IMAGE_PLAIN_RE = re.compile(r'!\[([^\]]*)\]\(([^\s"<>()]+)(?:\s+"([^"]*)")?\)')
-_LIST_PAREN_RE = re.compile(r"(\d+\))\s*(\S.*)")
-_LIST_DOT_RE = re.compile(r"(\d+\.)\s+(\S.*)")
-_LIST_BULLET_RE = re.compile(r"([-*])\s+(\S.*)")
-_RULE_LINE_RE = re.compile(r"(?:-{3,}|\*{3,}|_{3,})")
+_IMAGE_MARK_RE = re.compile(r"!\[[^\]]*\]\(")
+_LIST_PAREN_RE = re.compile(r"(\d+\))(\s*)(\S.*)")
+_LIST_DOT_RE = re.compile(r"(\d+\.)(\s+)(\S.*)")
+_LIST_BULLET_RE = re.compile(r"([-*])(\s+)(\S.*)")
+_NUMBER_DOT_RE = re.compile(r"\d+\.(?:\s|$)")
+_RULE_LINE_RE = re.compile(r"(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,}")
 _HTML_LINE_RE = re.compile(r"</?[A-Za-z][^>]*>")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
@@ -3109,6 +3271,21 @@ def _hides(char: str) -> bool:
 def _squeezed(line: str) -> str:
     """The line without what a reader does not see: hiding characters, '*' and spaces."""
     return "".join(char for char in line if not (_hides(char) or char == "*" or char.isspace()))
+
+
+def _starts_hidden(text: str) -> bool:
+    """True when a hiding character comes before the first character that shows."""
+    for char in text:
+        if _hides(char):
+            return True
+        if not (char == "*" or char.isspace()):
+            return False
+    return False
+
+
+def _is_number(char: str) -> bool:
+    """True for a character of a number category: a digit of any script, a fraction, ..."""
+    return bool(char) and unicodedata.category(char).startswith("N")
 
 
 def _split_heading(rest: str) -> tuple[Optional[str], str]:
@@ -3149,7 +3326,7 @@ def split_table_row(line: str) -> list[str]:
 
 
 def _is_separator_row(line: str) -> bool:
-    """True for a pipe line whose every cell, as written, is dashes with optional colons."""
+    """True when every cell of the line, as written, is dashes with optional colons."""
     return all(_SEPARATOR_CELL_RE.fullmatch(cell) for cell in _cells_as_written(line))
 
 
@@ -3194,6 +3371,11 @@ class _Builder:
         self.elements.append(element)
         if not self.seen_page_marker:
             self.before_first_page.append(element)
+        # an image inside a heading, a table, a list item or a paragraph is not read either
+        if element.kind not in ("image", "unclassified"):
+            for offset, line in enumerate(element.raw.split("\n")):
+                if _IMAGE_MARK_RE.search(line):
+                    self.flag("IMAGE_PRESENT", element, element.locator.line_start + offset)
 
     def flag(self, code: FindingCode, element: Element, line: Optional[int] = None) -> None:
         self.findings.append(
@@ -3383,7 +3565,7 @@ def parse_lines(
         # 5. image
         if stripped.startswith("!["):
             match = _IMAGE_ANGLE_RE.fullmatch(stripped) or _IMAGE_PLAIN_RE.fullmatch(stripped)
-            if match:
+            if match and match.group(1).strip() and match.group(2).strip():
                 builder.image(match, line_no, raw)
             else:
                 builder.unclassified(stripped, line_no, raw)
@@ -3391,7 +3573,7 @@ def parse_lines(
 
         # 8 (checked early). lines that look structural but are not interpreted
         if (
-            stripped.startswith(("```", "~~~", ">"))
+            stripped.startswith(("```", "~~~", ">", "<!--"))
             or _RULE_LINE_RE.fullmatch(stripped)
             or _HTML_LINE_RE.match(stripped)
         ):
@@ -3405,18 +3587,25 @@ def parse_lines(
             or _LIST_BULLET_RE.fullmatch(stripped)
         )
         if match:
-            builder.list_item(match.group(1), match.group(2), line_no, raw)
+            marker, gap, body = match.groups()
+            dotted = marker.endswith(".") and _NUMBER_DOT_RE.match(body.replace("*", ""))
+            if _starts_hidden(gap + body) or dotted:
+                # a hiding character next to the marker, or '2024. 5. 1 ...': not decided here
+                builder.unclassified(stripped, line_no, raw)
+            else:
+                builder.list_item(marker, body, line_no, raw)
             continue
         if stripped.startswith("-"):
             rest = stripped[1:]
-            if rest[:1].isdigit():
-                # '-18℃ ...': list item or negative number? Not decided here.
+            shown = rest.replace("*", "").lstrip()
+            if not shown or shown.startswith("-") or _starts_hidden(rest):
+                builder.unclassified(stripped, line_no, raw)
+            elif _is_number(shown[0]) or (shown[0] in ".," and _is_number(shown[1:2])):
+                # '-18℃ ...', '-**18℃**', '-.5': list item or negative number? Not decided here.
                 element = builder.paragraph(stripped, line_no, raw)
                 builder.flag("AMBIGUOUS_LIST_OR_NEGATIVE", element)
-            elif rest and not rest.startswith("-"):
-                builder.list_item("-", rest, line_no, raw)
             else:
-                builder.unclassified(stripped, line_no, raw)
+                builder.list_item("-", rest, line_no, raw)
             continue
 
         # 7. paragraph: one line is one paragraph
@@ -3431,7 +3620,7 @@ def parse_lines(
 
 Run: `.venv/Scripts/python -m pytest tests/parsing/test_parser_blocks.py -q`
 
-Expected: 마지막 줄이 `39 passed`
+Expected: 마지막 줄이 `109 passed`
 
 - [ ] **Step 5: 전체 검사를 돌린다**
 
@@ -3441,7 +3630,7 @@ Expected: 마지막 줄이 `39 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `320 passed`, `All checks passed!`, `15 files already formatted`
+Expected: 차례로 `390 passed`, `All checks passed!`, `15 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -3631,10 +3820,12 @@ _SEPARATOR_CELL_RE = re.compile(r":?-+:?")
 _CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
 _IMAGE_ANGLE_RE = re.compile(r'!\[([^\]]*)\]\(<([^">]+?)(?:\s+"([^"]*)")?\s*>\)')
 _IMAGE_PLAIN_RE = re.compile(r'!\[([^\]]*)\]\(([^\s"<>()]+)(?:\s+"([^"]*)")?\)')
-_LIST_PAREN_RE = re.compile(r"(\d+\))\s*(\S.*)")
-_LIST_DOT_RE = re.compile(r"(\d+\.)\s+(\S.*)")
-_LIST_BULLET_RE = re.compile(r"([-*])\s+(\S.*)")
-_RULE_LINE_RE = re.compile(r"(?:-{3,}|\*{3,}|_{3,})")
+_IMAGE_MARK_RE = re.compile(r"!\[[^\]]*\]\(")
+_LIST_PAREN_RE = re.compile(r"(\d+\))(\s*)(\S.*)")
+_LIST_DOT_RE = re.compile(r"(\d+\.)(\s+)(\S.*)")
+_LIST_BULLET_RE = re.compile(r"([-*])(\s+)(\S.*)")
+_NUMBER_DOT_RE = re.compile(r"\d+\.(?:\s|$)")
+_RULE_LINE_RE = re.compile(r"(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,}")
 _HTML_LINE_RE = re.compile(r"</?[A-Za-z][^>]*>")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
@@ -3666,6 +3857,21 @@ def _hides(char: str) -> bool:
 def _squeezed(line: str) -> str:
     """The line without what a reader does not see: hiding characters, '*' and spaces."""
     return "".join(char for char in line if not (_hides(char) or char == "*" or char.isspace()))
+
+
+def _starts_hidden(text: str) -> bool:
+    """True when a hiding character comes before the first character that shows."""
+    for char in text:
+        if _hides(char):
+            return True
+        if not (char == "*" or char.isspace()):
+            return False
+    return False
+
+
+def _is_number(char: str) -> bool:
+    """True for a character of a number category: a digit of any script, a fraction, ..."""
+    return bool(char) and unicodedata.category(char).startswith("N")
 
 
 def _split_heading(rest: str) -> tuple[Optional[str], str]:
@@ -3706,7 +3912,7 @@ def split_table_row(line: str) -> list[str]:
 
 
 def _is_separator_row(line: str) -> bool:
-    """True for a pipe line whose every cell, as written, is dashes with optional colons."""
+    """True when every cell of the line, as written, is dashes with optional colons."""
     return all(_SEPARATOR_CELL_RE.fullmatch(cell) for cell in _cells_as_written(line))
 
 
@@ -3751,6 +3957,11 @@ class _Builder:
         self.elements.append(element)
         if not self.seen_page_marker:
             self.before_first_page.append(element)
+        # an image inside a heading, a table, a list item or a paragraph is not read either
+        if element.kind not in ("image", "unclassified"):
+            for offset, line in enumerate(element.raw.split("\n")):
+                if _IMAGE_MARK_RE.search(line):
+                    self.flag("IMAGE_PRESENT", element, element.locator.line_start + offset)
 
     def flag(self, code: FindingCode, element: Element, line: Optional[int] = None) -> None:
         self.findings.append(
@@ -3940,7 +4151,7 @@ def parse_lines(
         # 5. image
         if stripped.startswith("!["):
             match = _IMAGE_ANGLE_RE.fullmatch(stripped) or _IMAGE_PLAIN_RE.fullmatch(stripped)
-            if match:
+            if match and match.group(1).strip() and match.group(2).strip():
                 builder.image(match, line_no, raw)
             else:
                 builder.unclassified(stripped, line_no, raw)
@@ -3948,7 +4159,7 @@ def parse_lines(
 
         # 8 (checked early). lines that look structural but are not interpreted
         if (
-            stripped.startswith(("```", "~~~", ">"))
+            stripped.startswith(("```", "~~~", ">", "<!--"))
             or _RULE_LINE_RE.fullmatch(stripped)
             or _HTML_LINE_RE.match(stripped)
         ):
@@ -3962,18 +4173,25 @@ def parse_lines(
             or _LIST_BULLET_RE.fullmatch(stripped)
         )
         if match:
-            builder.list_item(match.group(1), match.group(2), line_no, raw)
+            marker, gap, body = match.groups()
+            dotted = marker.endswith(".") and _NUMBER_DOT_RE.match(body.replace("*", ""))
+            if _starts_hidden(gap + body) or dotted:
+                # a hiding character next to the marker, or '2024. 5. 1 ...': not decided here
+                builder.unclassified(stripped, line_no, raw)
+            else:
+                builder.list_item(marker, body, line_no, raw)
             continue
         if stripped.startswith("-"):
             rest = stripped[1:]
-            if rest[:1].isdigit():
-                # '-18℃ ...': list item or negative number? Not decided here.
+            shown = rest.replace("*", "").lstrip()
+            if not shown or shown.startswith("-") or _starts_hidden(rest):
+                builder.unclassified(stripped, line_no, raw)
+            elif _is_number(shown[0]) or (shown[0] in ".," and _is_number(shown[1:2])):
+                # '-18℃ ...', '-**18℃**', '-.5': list item or negative number? Not decided here.
                 element = builder.paragraph(stripped, line_no, raw)
                 builder.flag("AMBIGUOUS_LIST_OR_NEGATIVE", element)
-            elif rest and not rest.startswith("-"):
-                builder.list_item("-", rest, line_no, raw)
             else:
-                builder.unclassified(stripped, line_no, raw)
+                builder.list_item("-", rest, line_no, raw)
             continue
 
         # 7. paragraph: one line is one paragraph
@@ -4012,7 +4230,7 @@ Expected: 마지막 줄이 `7 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `327 passed`, `All checks passed!`, `17 files already formatted`
+Expected: 차례로 `397 passed`, `All checks passed!`, `17 files already formatted`
 
 - [ ] **Step 7: 커밋한다**
 
@@ -4167,7 +4385,7 @@ Expected: 마지막 줄이 `11 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `338 passed`, `All checks passed!`, `18 files already formatted`
+Expected: 차례로 `408 passed`, `All checks passed!`, `18 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -4339,7 +4557,7 @@ Expected: 마지막 줄이 `30 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `368 passed`, `All checks passed!`, `20 files already formatted`
+Expected: 차례로 `438 passed`, `All checks passed!`, `20 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -4664,7 +4882,7 @@ Expected: 마지막 줄이 `57 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `425 passed`, `All checks passed!`, `21 files already formatted`
+Expected: 차례로 `495 passed`, `All checks passed!`, `21 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5033,7 +5251,7 @@ Expected: 마지막 줄이 `15 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `440 passed`, `All checks passed!`, `22 files already formatted`
+Expected: 차례로 `510 passed`, `All checks passed!`, `22 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5637,7 +5855,7 @@ Expected: 마지막 줄이 `22 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `462 passed`, `All checks passed!`, `24 files already formatted`
+Expected: 차례로 `532 passed`, `All checks passed!`, `24 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5856,7 +6074,7 @@ Expected: 마지막 줄이 `24 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `486 passed`, `All checks passed!`, `25 files already formatted`
+Expected: 차례로 `556 passed`, `All checks passed!`, `25 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -6081,7 +6299,7 @@ Expected: 마지막 줄이 `23 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `509 passed`, `All checks passed!`, `27 files already formatted`
+Expected: 차례로 `579 passed`, `All checks passed!`, `27 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6544,7 +6762,7 @@ Expected: 마지막 줄이 `33 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `542 passed`, `All checks passed!`, `29 files already formatted`
+Expected: 차례로 `612 passed`, `All checks passed!`, `29 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6890,7 +7108,7 @@ Expected: 종료 코드 0, 출력은 아래와 같다.
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `560 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `630 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 11: 커밋한다**
 
@@ -7067,7 +7285,7 @@ python -m venv .venv
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `560 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `630 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 5: 설계의 완료 기준을 하나씩 확인한다**
 

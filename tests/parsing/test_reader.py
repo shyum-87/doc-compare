@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 
 from app.parsing.reader import read_lines
 
@@ -26,6 +27,19 @@ def test_crlf_gives_the_same_lines_as_lf(tmp_path):
     crlf.write_bytes(TEXT.replace("\n", "\r\n").encode("utf-8"))
     assert read_lines(crlf).lines == read_lines(lf).lines
     assert read_lines(crlf).sha256 != read_lines(lf).sha256  # the hash is of the raw bytes
+
+
+def test_a_lone_cr_ends_a_line(tmp_path):
+    path = tmp_path / "cr.md"
+    path.write_bytes(b"a\r\nb\rc\nd")
+    assert read_lines(path).lines == ("a", "b", "c", "d")
+
+
+def test_no_other_character_ends_a_line(tmp_path):
+    text = "a\x0bb\x0cc\x1cd\x85e f g"
+    path = tmp_path / "separators.md"
+    path.write_bytes((text + "\n").encode("utf-8"))
+    assert read_lines(path).lines == (text,)
 
 
 def test_a_bom_is_ignored_but_hashed(tmp_path):
@@ -52,6 +66,10 @@ def test_a_missing_file_is_unreadable(tmp_path):
 
 def test_a_directory_is_unreadable(tmp_path):
     assert read_lines(tmp_path).error == "FILE_UNREADABLE"
+
+
+def test_a_path_with_a_nul_character_is_unreadable():
+    assert read_lines(Path("a\x00b.md")).error == "FILE_UNREADABLE"
 
 
 def test_bytes_that_are_not_utf8_are_reported(tmp_path):

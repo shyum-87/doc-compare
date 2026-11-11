@@ -21,11 +21,14 @@ class ReadResult:
 
 
 def read_lines(path: Path) -> ReadResult:
-    """Decode as UTF-8 (BOM ignored), accept CRLF and LF, hash the raw bytes."""
+    """Decode as UTF-8 (BOM ignored) and hash the raw bytes.
+
+    CRLF, LF and a lone CR each end a line; no other character does.
+    """
     file_name = path.name
     try:
         data = path.read_bytes()
-    except OSError:
+    except (OSError, ValueError):  # ValueError: the path holds a NUL character
         return ReadResult(file_name=file_name, sha256=None, lines=(), error="FILE_UNREADABLE")
     digest = hashlib.sha256(data).hexdigest()
     body = data[len(_BOM) :] if data.startswith(_BOM) else data
@@ -33,8 +36,8 @@ def read_lines(path: Path) -> ReadResult:
         text = body.decode("utf-8")
     except UnicodeDecodeError:
         return ReadResult(file_name=file_name, sha256=digest, lines=(), error="NOT_UTF8")
-    lines = text.replace("\r\n", "\n").split("\n")
-    if lines and lines[-1] == "":
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if lines[-1] == "":
         lines.pop()
     if not any(line.strip() for line in lines):
         return ReadResult(file_name=file_name, sha256=digest, lines=(), error="EMPTY_DOCUMENT")

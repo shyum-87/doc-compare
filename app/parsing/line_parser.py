@@ -97,6 +97,23 @@ def _is_separator_row(line: str) -> bool:
     return bool(cells) and all(_SEPARATOR_CELL_RE.fullmatch(cell) for cell in cells)
 
 
+def _continues_table(line: str) -> bool:
+    """True for a pipe line that holds no character other tools end a line at."""
+    body = line.strip()
+    return body.startswith("|") and len(body.splitlines()) == 1
+
+
+def _is_table(block: list[str]) -> bool:
+    """A header, then a separator row, and no separator row further down.
+
+    A second separator row can mean that two tables have run together, so the block
+    is not read as a table: nothing is guessed.
+    """
+    if len(block) < 2 or not _is_separator_row(block[1]):
+        return False
+    return not any(_is_separator_row(line) for line in block[2:])
+
+
 class _Builder:
     def __init__(self, variant: Variant) -> None:
         self.variant: Variant = variant
@@ -269,13 +286,15 @@ def parse_lines(
                 builder.unclassified(stripped, line_no, raw)
             continue
 
-        # 4. table: consecutive pipe lines whose second line is a separator row
+        # 4. table: consecutive pipe lines whose second line is the only separator row.
+        # A pipe line that holds a character other tools end a line at ends the block
+        # and is left to the check above
         if stripped.startswith("|"):
             block = [raw]
-            while index < len(lines) and lines[index].strip().startswith("|"):
+            while index < len(lines) and _continues_table(lines[index]):
                 block.append(lines[index])
                 index += 1
-            if len(block) >= 2 and _is_separator_row(block[1]):
+            if _is_table(block):
                 builder.table(block, line_no)
             else:
                 for offset, block_line in enumerate(block):

@@ -36,11 +36,12 @@ _FOLD = str.maketrans(
     }
 )
 
-# NFKC turns a superscript into a plain character, so '10³' would read as 103. Only a
-# superscript right after a digit is marked: the '²' of 'cm²' stays with its letters, as in
-# 'cm2'.
-_SUPERSCRIPT_AFTER_DIGIT = re.compile(
-    "(?<=[0-9\N{FULLWIDTH DIGIT ZERO}-\N{FULLWIDTH DIGIT NINE}])[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]"
+# NFKC turns a superscript into a plain character, so '10³' would read as 103 and the '⁻'
+# of 'm⁻³' as a hyphen inside a word. Two kinds are marked: a superscript right after a
+# digit, and a superscript sign right before a superscript digit. The '²' of 'cm²' stays
+# with its letters, as in 'cm2'.
+_SUPERSCRIPT_TO_MARK = re.compile(
+    "(?<=[0-9\N{FULLWIDTH DIGIT ZERO}-\N{FULLWIDTH DIGIT NINE}])[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]|[⁺⁻](?=[⁰¹²³⁴⁵⁶⁷⁸⁹])"
 )
 
 _PLAIN_DOT = re.compile(r"[0-9]+(?:\.[0-9]+)?")
@@ -50,6 +51,8 @@ _GROUPED_COMMA = re.compile(r"[1-9][0-9]{0,2}(?:\.[0-9]{3})+(?:,[0-9]+)?")
 
 _NUMBER_RE = re.compile(r"[0-9]+(?:[.,][0-9]+)*")
 _CODE_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
+# After a code: the next word is a code of its own (a run that holds a digit).
+_NEXT_CODE_RE = re.compile(r" [A-Za-z][A-Za-z_-]*[0-9]")
 _ASCII_LETTERS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 _ASCII_DIGITS = frozenset("0123456789")
 _ASCII_ALNUM = _ASCII_LETTERS | _ASCII_DIGITS
@@ -58,10 +61,11 @@ _ASCII_ALNUM = _ASCII_LETTERS | _ASCII_DIGITS
 def normalize(text: str) -> str:
     """NFKC (full-width -> half-width, '℃' -> '°C') plus the hand-folded signs.
 
-    A '^' goes before a superscript right after a digit first:
-    '10³' -> '10^3', '10⁻³' -> '10^-3'.
+    A '^' goes first before a superscript right after a digit and before a superscript
+    sign right before a superscript digit: '10³' -> '10^3', '10⁻³' -> '10^-3',
+    'm⁻³' -> 'm^-3'.
     """
-    marked = _SUPERSCRIPT_AFTER_DIGIT.sub(r"^\g<0>", text)
+    marked = _SUPERSCRIPT_TO_MARK.sub(r"^\g<0>", text)
     return unicodedata.normalize("NFKC", marked).translate(_FOLD)
 
 
@@ -154,11 +158,12 @@ def extract_tokens(text: str, language: Language) -> Tokens:
             if any(letter in _ASCII_DIGITS for letter in word):
                 others.append("code:" + word)
             position = match.end()
-            if scanned[position - 1] in _ASCII_DIGITS:
-                # 'A-5 kg': a unit is read after a code that ends in a digit too, unless a
-                # digit follows the unit ('A1 L2' is two codes)
+            ends_in_digit = scanned[position - 1] in _ASCII_DIGITS
+            if ends_in_digit and not _NEXT_CODE_RE.match(scanned, position):
+                # 'A-5 kg': a unit is read after a code that ends in a digit too, unless
+                # the next word is a code of its own ('A1 L2', 'T1 L-204A')
                 unit = _unit_at(scanned, position)
-                if unit is not None and scanned[unit[1] : unit[1] + 1] not in _ASCII_DIGITS:
+                if unit is not None:
                     others.append("unit:" + unit[0])
                     position = unit[1]
         elif char in _ASCII_DIGITS or _leading_point_at(scanned, position):

@@ -37,12 +37,19 @@ def _others(text, language="ko"):
         ("10⁹", "10^9"),
         ("10⁻³", "10^-3"),
         ("10⁺²³", "10^+23"),  # one mark, before the first
+        ("10² 와 10³", "10^2 와 10^3"),  # every one in the text
         ("１０³", "10^3"),  # after a full-width digit too
         ("BK01²", "BK01^2"),
         ("x²", "x2"),  # not right after a digit: no mark
         ("5 m² 와 3 m³", "5 m2 와 3 m3"),
         ("kg/cm²", "kg/cm2"),
         ("Ca²⁺", "Ca2+"),
+        ("m⁻³", "m^-3"),  # a sign right before a superscript digit is marked anywhere
+        ("cm⁻¹", "cm^-1"),
+        ("m⁺²", "m^+2"),
+        ("Na⁺", "Na+"),  # no superscript digit after the sign: no mark
+        ("A⁺⁻", "A+-"),
+        ("m⁻ ³", "m- 3"),
         ("10 ³", "10 3"),
         ("²", "2"),
         ("SO₄²⁻", "SO42-"),  # a subscript is not a digit here
@@ -67,6 +74,14 @@ def test_every_superscript_right_after_a_digit_is_marked(superscript, plain):
 )
 def test_a_superscript_is_marked_after_every_digit(digit, plain):
     assert normalize(digit + "³") == plain + "^3"
+
+
+@pytest.mark.parametrize("sign, plain_sign", [("⁺", "+"), ("⁻", "-")])
+@pytest.mark.parametrize("digit, plain", list(zip("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789", strict=True)))
+def test_a_superscript_sign_is_marked_before_every_superscript_digit(
+    sign, plain_sign, digit, plain
+):
+    assert normalize("m" + sign + digit) == "m^" + plain_sign + plain
 
 
 def test_numbers_are_found_with_their_value():
@@ -155,6 +170,30 @@ def test_a_superscript_after_a_letter_stays_with_the_letters(text, numbers, othe
 )
 def test_a_superscript_after_a_letter_reads_like_the_plain_character(with_superscript, plain):
     assert extract_tokens(with_superscript, "ko") == extract_tokens(plain, "ko")
+
+
+@pytest.mark.parametrize(
+    "text, numbers, others",
+    [
+        ("입자 3520 m⁻³", ["3520", "3"], ["unit:m", "sym:neg"]),
+        ("1000 cm⁻¹", ["1000", "1"], ["unit:cm", "sym:neg"]),
+        ("5 kg·m⁻²", ["5", "2"], ["unit:kg", "sym:neg"]),
+        ("조도 (W/m⁻²)", ["2"], ["sym:neg"]),
+        ("5 m⁺²", ["5", "2"], ["unit:m"]),
+        ("Na⁺ 5 mg", ["5"], ["unit:mg"]),  # a charge, not the sign of a number
+    ],
+)
+def test_the_sign_of_a_superscript_number_after_a_letter_is_kept(text, numbers, others):
+    assert _numbers(text) == numbers
+    assert _others(text) == others
+
+
+@pytest.mark.parametrize(
+    "negative, positive",
+    [("3520 m⁻³", "3520 m³"), ("1000 cm⁻¹", "1000 cm¹"), ("5 m⁻²", "5 m⁺²")],
+)
+def test_a_negative_superscript_does_not_read_like_a_positive_one(negative, positive):
+    assert extract_tokens(negative, "ko") != extract_tokens(positive, "ko")
 
 
 @pytest.mark.parametrize(
@@ -259,9 +298,19 @@ def test_scanning_goes_on_after_the_unit():
         ("A-5 min", ["code:A-5"]),  # a word, not a unit
         ("BK01- kg", ["code:BK01"]),  # as written, the run does not end in a digit
         ("pH kg", []),  # not a code
-        ("A1 L2", ["code:A1", "code:L2"]),  # a digit follows the unit: the next code
+        ("A1 L2", ["code:A1", "code:L2"]),  # the next word is a code of its own
+        ("A1 L05", ["code:A1", "code:L05"]),
+        ("A1 L9", ["code:A1", "code:L9"]),
         ("A-5 m2", ["code:A-5", "code:m2"]),
         ("A-5 m²", ["code:A-5", "code:m2"]),
+        ("T1 L-204A", ["code:T1", "code:L-204A"]),  # so are these: the run holds a digit
+        ("A1 m_1a", ["code:A1", "code:m_1a"]),
+        ("B2 kg-B2", ["code:B2", "code:kg-B2"]),
+        ("C-500 mg-", ["code:C-500", "unit:mg"]),  # no digit in the run: still a unit
+        ("A-5 mg-kg", ["code:A-5", "unit:mg"]),
+        ("A-5 kg 와 B2", ["code:A-5", "unit:kg", "code:B2"]),  # a code further on
+        ("BK01 %5", ["code:BK01", "unit:%"]),  # a unit that is not a letter starts no code
+        ("A-5 m⁻²", ["code:A-5", "unit:m", "sym:neg"]),
         ("CO2 5%", ["code:CO2", "unit:%"]),
     ],
 )

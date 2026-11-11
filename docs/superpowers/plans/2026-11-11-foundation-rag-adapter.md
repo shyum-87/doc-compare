@@ -947,7 +947,7 @@ git push -u origin main
 
 ### Task 4: 파일 읽기
 
-설계 §3. 파일을 UTF-8로 읽어 줄 목록과 `sha256`을 돌려준다. 앞머리 BOM은 무시하고, CRLF와 LF를 모두 받는다. 해시는 파일 바이트 그대로 계산한다. 읽을 수 없는 파일은 예외가 아니라 `error` 값으로 알린다.
+설계 §3. 파일을 UTF-8로 읽어 줄 목록과 `sha256`을 돌려준다. 앞머리 BOM은 무시하고, CRLF·LF·홀로 있는 CR을 줄 끝으로 본다. 그 밖의 문자(세로 탭, 폼 피드, U+0085, U+2028 등)는 줄을 나누지 않는다. 줄 번호가 사람이 편집기에서 보는 번호와 같아야 하기 때문이다. NUL 문자가 든 경로처럼 열 수 없는 경로도 예외가 아니라 `FILE_UNREADABLE`이다. 해시는 파일 바이트 그대로 계산한다. 읽을 수 없는 파일은 예외가 아니라 `error` 값으로 알린다.
 
 **Files:**
 - Create: `app/parsing/reader.py`
@@ -963,6 +963,7 @@ git push -u origin main
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 
 from app.parsing.reader import read_lines
 
@@ -986,6 +987,19 @@ def test_crlf_gives_the_same_lines_as_lf(tmp_path):
     crlf.write_bytes(TEXT.replace("\n", "\r\n").encode("utf-8"))
     assert read_lines(crlf).lines == read_lines(lf).lines
     assert read_lines(crlf).sha256 != read_lines(lf).sha256  # the hash is of the raw bytes
+
+
+def test_a_lone_cr_ends_a_line(tmp_path):
+    path = tmp_path / "cr.md"
+    path.write_bytes(b"a\r\nb\rc\nd")
+    assert read_lines(path).lines == ("a", "b", "c", "d")
+
+
+def test_no_other_character_ends_a_line(tmp_path):
+    text = "a\x0bb\x0cc\x1cd\x85e\N{LINE SEPARATOR}f\N{PARAGRAPH SEPARATOR}g"
+    path = tmp_path / "separators.md"
+    path.write_bytes((text + "\n").encode("utf-8"))
+    assert read_lines(path).lines == (text,)
 
 
 def test_a_bom_is_ignored_but_hashed(tmp_path):
@@ -1012,6 +1026,10 @@ def test_a_missing_file_is_unreadable(tmp_path):
 
 def test_a_directory_is_unreadable(tmp_path):
     assert read_lines(tmp_path).error == "FILE_UNREADABLE"
+
+
+def test_a_path_with_a_nul_character_is_unreadable():
+    assert read_lines(Path("a\x00b.md")).error == "FILE_UNREADABLE"
 
 
 def test_bytes_that_are_not_utf8_are_reported(tmp_path):
@@ -1069,11 +1087,14 @@ class ReadResult:
 
 
 def read_lines(path: Path) -> ReadResult:
-    """Decode as UTF-8 (BOM ignored), accept CRLF and LF, hash the raw bytes."""
+    """Decode as UTF-8 (BOM ignored) and hash the raw bytes.
+
+    CRLF, LF and a lone CR each end a line; no other character does.
+    """
     file_name = path.name
     try:
         data = path.read_bytes()
-    except OSError:
+    except (OSError, ValueError):  # ValueError: the path holds a NUL character
         return ReadResult(file_name=file_name, sha256=None, lines=(), error="FILE_UNREADABLE")
     digest = hashlib.sha256(data).hexdigest()
     body = data[len(_BOM) :] if data.startswith(_BOM) else data
@@ -1081,8 +1102,8 @@ def read_lines(path: Path) -> ReadResult:
         text = body.decode("utf-8")
     except UnicodeDecodeError:
         return ReadResult(file_name=file_name, sha256=digest, lines=(), error="NOT_UTF8")
-    lines = text.replace("\r\n", "\n").split("\n")
-    if lines and lines[-1] == "":
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if lines[-1] == "":
         lines.pop()
     if not any(line.strip() for line in lines):
         return ReadResult(file_name=file_name, sha256=digest, lines=(), error="EMPTY_DOCUMENT")
@@ -1093,7 +1114,7 @@ def read_lines(path: Path) -> ReadResult:
 
 Run: `.venv/Scripts/python -m pytest tests/parsing/test_reader.py -q`
 
-Expected: 마지막 줄이 `8 passed`
+Expected: 마지막 줄이 `11 passed`
 
 - [ ] **Step 5: 전체 검사를 돌린다**
 
@@ -1103,7 +1124,7 @@ Expected: 마지막 줄이 `8 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `69 passed`, `All checks passed!`, `9 files already formatted`
+Expected: 차례로 `72 passed`, `All checks passed!`, `9 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -1509,7 +1530,7 @@ Expected: 마지막 줄이 `31 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `100 passed`, `All checks passed!`, `12 files already formatted`
+Expected: 차례로 `103 passed`, `All checks passed!`, `12 files already formatted`
 
 - [ ] **Step 7: 커밋한다**
 
@@ -1843,7 +1864,7 @@ Expected: 마지막 줄이 `9 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `109 passed`, `All checks passed!`, `13 files already formatted`
+Expected: 차례로 `112 passed`, `All checks passed!`, `13 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -2281,7 +2302,7 @@ Expected: 마지막 줄이 `16 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `125 passed`, `All checks passed!`, `14 files already formatted`
+Expected: 차례로 `128 passed`, `All checks passed!`, `14 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -2800,7 +2821,7 @@ Expected: 마지막 줄이 `39 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `164 passed`, `All checks passed!`, `15 files already formatted`
+Expected: 차례로 `167 passed`, `All checks passed!`, `15 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -3305,7 +3326,7 @@ Expected: 마지막 줄이 `7 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `171 passed`, `All checks passed!`, `17 files already formatted`
+Expected: 차례로 `174 passed`, `All checks passed!`, `17 files already formatted`
 
 - [ ] **Step 7: 커밋한다**
 
@@ -3460,7 +3481,7 @@ Expected: 마지막 줄이 `11 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `182 passed`, `All checks passed!`, `18 files already formatted`
+Expected: 차례로 `185 passed`, `All checks passed!`, `18 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -3632,7 +3653,7 @@ Expected: 마지막 줄이 `30 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `212 passed`, `All checks passed!`, `20 files already formatted`
+Expected: 차례로 `215 passed`, `All checks passed!`, `20 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -3957,7 +3978,7 @@ Expected: 마지막 줄이 `57 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `269 passed`, `All checks passed!`, `21 files already formatted`
+Expected: 차례로 `272 passed`, `All checks passed!`, `21 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -4326,7 +4347,7 @@ Expected: 마지막 줄이 `15 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `284 passed`, `All checks passed!`, `22 files already formatted`
+Expected: 차례로 `287 passed`, `All checks passed!`, `22 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -4930,7 +4951,7 @@ Expected: 마지막 줄이 `22 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `306 passed`, `All checks passed!`, `24 files already formatted`
+Expected: 차례로 `309 passed`, `All checks passed!`, `24 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5149,7 +5170,7 @@ Expected: 마지막 줄이 `24 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `330 passed`, `All checks passed!`, `25 files already formatted`
+Expected: 차례로 `333 passed`, `All checks passed!`, `25 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -5374,7 +5395,7 @@ Expected: 마지막 줄이 `23 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `353 passed`, `All checks passed!`, `27 files already formatted`
+Expected: 차례로 `356 passed`, `All checks passed!`, `27 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5837,7 +5858,7 @@ Expected: 마지막 줄이 `33 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `386 passed`, `All checks passed!`, `29 files already formatted`
+Expected: 차례로 `389 passed`, `All checks passed!`, `29 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6183,7 +6204,7 @@ Expected: 종료 코드 0, 출력은 아래와 같다.
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `404 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `407 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 11: 커밋한다**
 
@@ -6360,7 +6381,7 @@ python -m venv .venv
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `404 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `407 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 5: 설계의 완료 기준을 하나씩 확인한다**
 

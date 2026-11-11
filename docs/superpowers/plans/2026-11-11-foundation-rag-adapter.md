@@ -582,7 +582,7 @@ git push -u origin main
 
 ### Task 3: 발견 항목과 결과 모델
 
-설계 §6.4, §7.1, §7.2. 발견 항목 코드 14개와 등급, 번역본 점검 결과, 전체 결과를 만든다. 등급은 코드가 정한다(D-013). 호출하는 쪽이 등급을 고르지 못하게 `new_finding()`으로만 만든다.
+설계 §6.4, §7.1, §7.2. 발견 항목 코드 14개와 등급, 번역본 점검 결과, 전체 결과를 만든다. 등급은 코드가 정한다(D-013). 호출하는 쪽이 등급을 고르지 못하게 `new_finding()`으로만 만든다. 모델도 어긋나는 조합을 받지 않는다. 코드와 다른 등급의 발견 항목, 토큰 목록과 어긋나는 짝 상태, 상태와 내용이 어긋나는 결과(`OK`인데 "검토 필요" 발견 항목이 있음, `FAILED`인데 실패 사유가 없거나 문서가 들어 있음 등)는 만들 수 없다.
 
 **Files:**
 - Create: `app/models/findings.py`
@@ -602,22 +602,48 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
+from app.models.document import Document, Locator, Paragraph
 from app.models.findings import (
     DOCUMENT_SCOPE_CODES,
     INFO_CODES,
     Failure,
+    Finding,
     FindingCode,
     IngestResult,
+    PairResult,
     new_finding,
 )
 
 ALL_CODES = get_args(FindingCode)
 
 
+def _document() -> Document:
+    paragraph = Paragraph(
+        element_id="e0001",
+        locator=Locator(page=1, section_path=(), line_start=1, line_end=1),
+        raw="계량한다.",
+        text="계량한다.",
+    )
+    return Document(
+        doc_id="SOP-SAMPLE",
+        version="1",
+        variant="source",
+        language="ko",
+        file_name="sample.md",
+        sha256="0" * 64,
+        elements=(paragraph,),
+    )
+
+
+def _result(status: str, **fields: object) -> IngestResult:
+    return IngestResult(status=status, parser_version="0.1.0", **fields)
+
+
 def test_there_are_fourteen_finding_codes():
     assert len(ALL_CODES) == 14
-    assert INFO_CODES <= set(ALL_CODES)
-    assert DOCUMENT_SCOPE_CODES <= set(ALL_CODES)
+    assert INFO_CODES == {"HEADING_NUMBER_MISMATCH", "IMAGE_PRESENT"}
+    assert DOCUMENT_SCOPE_CODES == {"NO_PAGE_MARKER", "SOURCE_NOT_PROVIDED"}
+    assert INFO_CODES | DOCUMENT_SCOPE_CODES <= set(ALL_CODES)
 
 
 @pytest.mark.parametrize("code", ALL_CODES)
@@ -626,12 +652,19 @@ def test_the_grade_is_fixed_by_the_code(code):
     assert new_finding(code, "translated").grade == expected
 
 
+@pytest.mark.parametrize("code", ALL_CODES)
+def test_a_finding_cannot_carry_another_grade(code):
+    wrong = "review_required" if code in {"HEADING_NUMBER_MISMATCH", "IMAGE_PRESENT"} else "info"
+    with pytest.raises(ValidationError):
+        Finding(code=code, grade=wrong, document="translated")
+
+
 def test_a_finding_points_at_elements_and_lines():
     finding = new_finding(
         "TOKEN_MISMATCH",
         "translated",
         element_ids=("e0017",),
-        counterpart_element_ids=("e0017",),
+        counterpart_element_ids=("e0018",),
         cell_ref="e0017:r2c3",
         line_start=39,
         line_end=39,
@@ -639,13 +672,32 @@ def test_a_finding_points_at_elements_and_lines():
         extra_tokens=("num:2.0",),
     )
     assert finding.document == "translated"
+    assert finding.element_ids == ("e0017",)
+    assert finding.counterpart_element_ids == ("e0018",)
     assert finding.cell_ref == "e0017:r2c3"
     assert (finding.line_start, finding.line_end) == (39, 39)
+    assert finding.missing_tokens == ("num:1,0",)
+    assert finding.extra_tokens == ("num:2.0",)
+
+
+@pytest.mark.parametrize(("line_start", "line_end"), [(0, 1), (40, 39), (39, None), (None, 39)])
+def test_a_finding_rejects_impossible_line_numbers(line_start, line_end):
+    with pytest.raises(ValidationError):
+        new_finding("TOKEN_MISMATCH", "translated", line_start=line_start, line_end=line_end)
 
 
 def test_an_unknown_code_is_rejected():
     with pytest.raises(ValidationError):
         new_finding("SOMETHING_ELSE", "translated")
+
+
+def test_a_pair_is_a_mismatch_exactly_when_tokens_differ():
+    with pytest.raises(ValidationError):
+        PairResult(
+            translated_ref="e0001", source_ref="e0001", status="match", missing_tokens=("num:1",)
+        )
+    with pytest.raises(ValidationError):
+        PairResult(translated_ref="e0001", source_ref="e0001", status="token_mismatch")
 
 
 def test_a_failure_names_the_file_unless_the_error_is_internal():
@@ -654,13 +706,52 @@ def test_a_failure_names_the_file_unless_the_error_is_internal():
 
 
 def test_a_failed_result_carries_no_documents():
-    result = IngestResult(
-        status="FAILED", parser_version="0.1.0", failure=Failure(reason="EMPTY_DOCUMENT")
-    )
+    result = _result("FAILED", failure=Failure(reason="EMPTY_DOCUMENT"))
     assert result.documents == ()
     assert result.findings == ()
     assert result.translation_check is None
     assert IngestResult.model_validate_json(result.model_dump_json()) == result
+
+
+def test_a_result_with_documents_survives_a_json_round_trip():
+    review = new_finding("UNCLASSIFIED_LINE", "source", element_ids=("e0001",))
+    result = _result("REVIEW_REQUIRED", documents=(_document(),), findings=(review,))
+    assert IngestResult.model_validate_json(result.model_dump_json()) == result
+
+
+def test_info_findings_do_not_stop_an_ok_result():
+    info = new_finding("IMAGE_PRESENT", "source", element_ids=("e0001",))
+    assert _result("OK", documents=(_document(),), findings=(info,)).status == "OK"
+
+
+@pytest.mark.parametrize(
+    ("status", "fields"),
+    [
+        ("FAILED", {}),
+        ("FAILED", {"failure": Failure(reason="NOT_UTF8"), "documents": (_document(),)}),
+        (
+            "FAILED",
+            {
+                "failure": Failure(reason="NOT_UTF8"),
+                "findings": (new_finding("NO_PAGE_MARKER", "source"),),
+            },
+        ),
+        ("OK", {"documents": (_document(),), "failure": Failure(reason="INTERNAL_ERROR")}),
+        ("OK", {}),
+        (
+            "OK",
+            {"documents": (_document(),), "findings": (new_finding("NO_PAGE_MARKER", "source"),)},
+        ),
+        ("REVIEW_REQUIRED", {"documents": (_document(),)}),
+        (
+            "REVIEW_REQUIRED",
+            {"documents": (_document(),), "findings": (new_finding("IMAGE_PRESENT", "source"),)},
+        ),
+    ],
+)
+def test_a_result_cannot_contradict_its_status(status, fields):
+    with pytest.raises(ValidationError):
+        _result(status, **fields)
 ```
 
 - [ ] **Step 2: 테스트가 실패하는지 확인한다**
@@ -688,6 +779,8 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
+from pydantic import Field, model_validator
+
 from app.models.document import Document, FrozenModel, Variant
 
 Status = Literal["FAILED", "REVIEW_REQUIRED", "OK"]
@@ -714,6 +807,11 @@ INFO_CODES: frozenset[str] = frozenset({"HEADING_NUMBER_MISMATCH", "IMAGE_PRESEN
 DOCUMENT_SCOPE_CODES: frozenset[str] = frozenset({"NO_PAGE_MARKER", "SOURCE_NOT_PROVIDED"})
 
 
+def grade_of(code: str) -> Grade:
+    """The grade is fixed by the code (D-013)."""
+    return "info" if code in INFO_CODES else "review_required"
+
+
 class Finding(FrozenModel):
     code: FindingCode
     grade: Grade
@@ -721,10 +819,20 @@ class Finding(FrozenModel):
     element_ids: tuple[str, ...] = ()
     counterpart_element_ids: tuple[str, ...] = ()
     cell_ref: Optional[str] = None
-    line_start: Optional[int] = None
-    line_end: Optional[int] = None
+    line_start: Optional[int] = Field(default=None, ge=1)
+    line_end: Optional[int] = Field(default=None, ge=1)
     missing_tokens: tuple[str, ...] = ()
     extra_tokens: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _grade_and_lines_are_consistent(self) -> Finding:
+        if self.grade != grade_of(self.code):
+            raise ValueError(f"{self.code} cannot have the grade {self.grade}")
+        if (self.line_start is None) != (self.line_end is None):
+            raise ValueError("line_start and line_end are given together or not at all")
+        if self.line_start is not None and self.line_end < self.line_start:
+            raise ValueError("line_end is before line_start")
+        return self
 
 
 def new_finding(
@@ -739,11 +847,10 @@ def new_finding(
     missing_tokens: tuple[str, ...] = (),
     extra_tokens: tuple[str, ...] = (),
 ) -> Finding:
-    """Build a finding; the grade is fixed by the code (D-013)."""
-    grade: Grade = "info" if code in INFO_CODES else "review_required"
+    """Build a finding with the grade its code fixes."""
     return Finding(
         code=code,
-        grade=grade,
+        grade=grade_of(code),
         document=document,
         element_ids=element_ids,
         counterpart_element_ids=counterpart_element_ids,
@@ -761,6 +868,13 @@ class PairResult(FrozenModel):
     status: Literal["match", "token_mismatch"]
     missing_tokens: tuple[str, ...] = ()
     extra_tokens: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _status_agrees_with_the_tokens(self) -> PairResult:
+        differs = bool(self.missing_tokens or self.extra_tokens)
+        if differs != (self.status == "token_mismatch"):
+            raise ValueError(f"the status {self.status} disagrees with the token lists")
+        return self
 
 
 class UnpairedSegment(FrozenModel):
@@ -786,13 +900,30 @@ class IngestResult(FrozenModel):
     documents: tuple[Document, ...] = ()
     findings: tuple[Finding, ...] = ()
     translation_check: Optional[TranslationCheck] = None
+
+    @model_validator(mode="after")
+    def _status_agrees_with_the_content(self) -> IngestResult:
+        if self.status == "FAILED":
+            if self.failure is None:
+                raise ValueError("a FAILED result needs a failure")
+            if self.documents or self.findings or self.translation_check is not None:
+                raise ValueError("a FAILED result carries no documents, findings or check")
+            return self
+        if self.failure is not None:
+            raise ValueError(f"a failure cannot have the status {self.status}")
+        if not self.documents:
+            raise ValueError(f"the status {self.status} needs a document")
+        needs_review = any(finding.grade == "review_required" for finding in self.findings)
+        if needs_review != (self.status == "REVIEW_REQUIRED"):
+            raise ValueError(f"the status {self.status} disagrees with the findings")
+        return self
 ```
 
 - [ ] **Step 4: 테스트가 통과하는지 확인한다**
 
 Run: `.venv/Scripts/python -m pytest tests/models/test_findings.py -q`
 
-Expected: 마지막 줄이 `19 passed`
+Expected: 마지막 줄이 `48 passed`
 
 - [ ] **Step 5: 전체 검사를 돌린다**
 
@@ -802,7 +933,7 @@ Expected: 마지막 줄이 `19 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `32 passed`, `All checks passed!`, `7 files already formatted`
+Expected: 차례로 `61 passed`, `All checks passed!`, `7 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -972,7 +1103,7 @@ Expected: 마지막 줄이 `8 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `40 passed`, `All checks passed!`, `9 files already formatted`
+Expected: 차례로 `69 passed`, `All checks passed!`, `9 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -1378,7 +1509,7 @@ Expected: 마지막 줄이 `31 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `71 passed`, `All checks passed!`, `12 files already formatted`
+Expected: 차례로 `100 passed`, `All checks passed!`, `12 files already formatted`
 
 - [ ] **Step 7: 커밋한다**
 
@@ -1712,7 +1843,7 @@ Expected: 마지막 줄이 `9 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `80 passed`, `All checks passed!`, `13 files already formatted`
+Expected: 차례로 `109 passed`, `All checks passed!`, `13 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -2150,7 +2281,7 @@ Expected: 마지막 줄이 `16 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `96 passed`, `All checks passed!`, `14 files already formatted`
+Expected: 차례로 `125 passed`, `All checks passed!`, `14 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -2669,7 +2800,7 @@ Expected: 마지막 줄이 `39 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `135 passed`, `All checks passed!`, `15 files already formatted`
+Expected: 차례로 `164 passed`, `All checks passed!`, `15 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -3174,7 +3305,7 @@ Expected: 마지막 줄이 `7 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `142 passed`, `All checks passed!`, `17 files already formatted`
+Expected: 차례로 `171 passed`, `All checks passed!`, `17 files already formatted`
 
 - [ ] **Step 7: 커밋한다**
 
@@ -3329,7 +3460,7 @@ Expected: 마지막 줄이 `11 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `153 passed`, `All checks passed!`, `18 files already formatted`
+Expected: 차례로 `182 passed`, `All checks passed!`, `18 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -3501,7 +3632,7 @@ Expected: 마지막 줄이 `30 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `183 passed`, `All checks passed!`, `20 files already formatted`
+Expected: 차례로 `212 passed`, `All checks passed!`, `20 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -3826,7 +3957,7 @@ Expected: 마지막 줄이 `57 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `240 passed`, `All checks passed!`, `21 files already formatted`
+Expected: 차례로 `269 passed`, `All checks passed!`, `21 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -4195,7 +4326,7 @@ Expected: 마지막 줄이 `15 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `255 passed`, `All checks passed!`, `22 files already formatted`
+Expected: 차례로 `284 passed`, `All checks passed!`, `22 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -4799,7 +4930,7 @@ Expected: 마지막 줄이 `22 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `277 passed`, `All checks passed!`, `24 files already formatted`
+Expected: 차례로 `306 passed`, `All checks passed!`, `24 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5018,7 +5149,7 @@ Expected: 마지막 줄이 `24 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `301 passed`, `All checks passed!`, `25 files already formatted`
+Expected: 차례로 `330 passed`, `All checks passed!`, `25 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -5243,7 +5374,7 @@ Expected: 마지막 줄이 `23 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `324 passed`, `All checks passed!`, `27 files already formatted`
+Expected: 차례로 `353 passed`, `All checks passed!`, `27 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5706,7 +5837,7 @@ Expected: 마지막 줄이 `33 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `357 passed`, `All checks passed!`, `29 files already formatted`
+Expected: 차례로 `386 passed`, `All checks passed!`, `29 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6052,7 +6183,7 @@ Expected: 종료 코드 0, 출력은 아래와 같다.
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `375 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `404 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 11: 커밋한다**
 
@@ -6229,7 +6360,7 @@ python -m venv .venv
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `375 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `404 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 5: 설계의 완료 기준을 하나씩 확인한다**
 

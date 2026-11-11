@@ -1921,12 +1921,13 @@ def test_findings_name_the_document_they_are_about(parse):
 
 
 def test_every_finding_names_the_document_it_is_about(parse):
-    text = "문단이다.\n[PAGE 2]\n## 3. 제조\n### 4.1 조회\n[PAGE 1]"
+    text = "문단이다.\n[PAGE 2]\n## 3. 제조\n### 4.1 조회\n[PAGE x]\n[PAGE 1]"
     for variant in ("source", "translated"):
         _, findings = parse(text, variant=variant)
         assert _codes(findings) == [
             "CONTENT_BEFORE_FIRST_PAGE",
             "HEADING_NUMBER_MISMATCH",
+            "UNCLASSIFIED_LINE",
             "PAGE_NUMBER_NOT_INCREASING",
         ]
         assert {finding.document for finding in findings} == {variant}

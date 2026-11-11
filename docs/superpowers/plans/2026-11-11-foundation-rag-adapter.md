@@ -7222,6 +7222,10 @@ def _write(tmp_path, name, data):
     return path
 
 
+def _messages(caplog):
+    return [f"{record.levelname} {record.getMessage()}" for record in caplog.records]
+
+
 # --- normal input ---------------------------------------------------------------------
 
 
@@ -7256,6 +7260,7 @@ def test_a_translated_document_with_its_source(ko_sample, source_samples, langua
     assert source.file_name == f"sample_bakery_sop.{language}.md"
     assert source.sha256 == hashlib.sha256(source_samples[language].read_bytes()).hexdigest()
     assert (translated.doc_id, source.doc_id) == ("SOP-SAMPLE", "SOP-SAMPLE")
+    assert (translated.version, source.version) == ("1", "1")
 
     assert len(result.translation_check.pairs) == 120
     assert result.translation_check.unpaired == ()
@@ -7283,7 +7288,15 @@ def test_a_changed_number_in_the_translation_needs_review(tmp_path, ko_sample, s
     text = ko_sample.read_text(encoding="utf-8").replace("±1.0%", "±2.0%")
     result = _ingest(_write(tmp_path, "rag_ko.md", text), "vi", source_samples["vi"])
     assert result.status == "REVIEW_REQUIRED"
-    assert _codes(result) == {"IMAGE_PRESENT": 6, "TOKEN_MISMATCH": 1}
+    # findings of the main file, then of the source file, then of the check
+    assert [(finding.code, finding.document) for finding in result.findings] == [
+        *[("IMAGE_PRESENT", "translated")] * 3,
+        *[("IMAGE_PRESENT", "source")] * 3,
+        ("TOKEN_MISMATCH", "translated"),
+    ]
+    finding = result.findings[-1]
+    assert finding.missing_tokens == ("num:1,0",)  # what the source has
+    assert finding.extra_tokens == ("num:2.0",)  # what the translation has instead
 
 
 def test_bom_and_crlf_are_read_normally(tmp_path, ko_sample):
@@ -7389,11 +7402,16 @@ def test_an_unexpected_error_fails_closed(monkeypatch, caplog, ko_sample):
         raise RuntimeError("비밀 문장: " + lines[6])
 
     monkeypatch.setattr(ingest_module, "parse_lines", explode)
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.DEBUG):
         result = _ingest(ko_sample)
     _assert_failed(result, "INTERNAL_ERROR", None)
-    assert "RuntimeError" in caplog.text
-    assert "비밀 문장" not in caplog.text  # the message may quote the document
+    # the type of the error and the place in the code, nothing else: the message of the
+    # error may quote the document, and so may a traceback
+    raised_at = explode.__code__.co_firstlineno + 1
+    assert _messages(caplog) == [
+        f"ERROR internal error: RuntimeError at test_ingest.py:{raised_at}"
+    ]
+    assert "비밀 문장" not in caplog.text
 
 
 def test_a_lost_line_fails_closed(monkeypatch, ko_sample):
@@ -7407,26 +7425,90 @@ def test_a_lost_line_fails_closed(monkeypatch, ko_sample):
     _assert_failed(_ingest(ko_sample), "INTERNAL_ERROR", None)
 
 
+@pytest.mark.parametrize("error", [KeyError, AssertionError])
 def test_an_error_while_checking_the_translation_fails_closed(
-    monkeypatch, ko_sample, source_samples
+    monkeypatch, ko_sample, source_samples, error
 ):
     def explode(translated, source):
-        raise KeyError("e0001")
+        raise error("e0001")
 
     monkeypatch.setattr(ingest_module, "check_translation", explode)
     _assert_failed(_ingest(ko_sample, "en", source_samples["en"]), "INTERNAL_ERROR", None)
+
+
+def test_a_lost_line_in_the_source_file_fails_closed(monkeypatch, ko_sample, source_samples):
+    real = ingest_module.parse_lines
+
+    def drop_one_in_the_source(lines, variant):
+        elements, findings = real(lines, variant)
+        return (elements[:-1] if variant == "source" else elements), findings
+
+    monkeypatch.setattr(ingest_module, "parse_lines", drop_one_in_the_source)
+    _assert_failed(_ingest(ko_sample, "vi", source_samples["vi"]), "INTERNAL_ERROR", None)
+
+
+class _Unforeseen(Exception):
+    """An error of a type the flow has never heard of."""
+
+
+@pytest.mark.parametrize("error", [_Unforeseen, AssertionError, TypeError, MemoryError])
+def test_an_error_in_the_source_file_fails_the_whole_result(
+    monkeypatch, ko_sample, source_samples, error
+):
+    real = ingest_module.parse_lines
+
+    def explode_in_the_source(lines, variant):
+        if variant == "source":
+            raise error("x")
+        return real(lines, variant)
+
+    monkeypatch.setattr(ingest_module, "parse_lines", explode_in_the_source)
+    # the Korean file was read without trouble, but nothing of it may come back
+    _assert_failed(_ingest(ko_sample, "vi", source_samples["vi"]), "INTERNAL_ERROR", None)
+
+
+def test_an_interrupt_is_not_turned_into_a_result(monkeypatch, ko_sample):
+    def interrupt(lines, variant):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(ingest_module, "parse_lines", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        _ingest(ko_sample)
 
 
 # --- logs -----------------------------------------------------------------------------
 
 
 def test_logs_report_counts_and_codes(caplog, ko_sample, source_samples):
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.DEBUG):
         _ingest(ko_sample, "vi", source_samples["vi"])
-    assert "read the translated file: 114 lines, 49 elements" in caplog.text
-    assert "read the source file: 114 lines, 49 elements" in caplog.text
-    assert "status: OK" in caplog.text
-    assert "findings: IMAGE_PRESENT=6" in caplog.text
+    # these lines and no others: no file name, no path, no document ID
+    assert _messages(caplog) == [
+        "INFO read the translated file: 114 lines, 49 elements",
+        "INFO read the source file: 114 lines, 49 elements",
+        "INFO status: OK",
+        "INFO findings: IMAGE_PRESENT=6",
+    ]
+
+
+def test_a_file_without_findings_logs_none(caplog, tmp_path):
+    with caplog.at_level(logging.DEBUG):
+        _ingest(_write(tmp_path, "plain.md", "[PAGE 1]\n문단이다.\n"))
+    assert _messages(caplog) == [
+        "INFO read the source file: 2 lines, 2 elements",
+        "INFO status: OK",
+        "INFO findings: none",
+    ]
+
+
+def test_the_codes_in_the_log_are_in_alphabetical_order(caplog, tmp_path):
+    with caplog.at_level(logging.DEBUG):
+        result = _ingest(_write(tmp_path, "table.md", "| a | b |\n|---|---|\n| 1 |\n"))
+    assert [finding.code for finding in result.findings] == [
+        "TABLE_ROW_WIDTH_MISMATCH",
+        "NO_PAGE_MARKER",
+    ]
+    assert _messages(caplog)[-1] == "INFO findings: NO_PAGE_MARKER=1, TABLE_ROW_WIDTH_MISMATCH=1"
 
 
 def test_logs_carry_no_document_text(caplog, tmp_path, ko_sample, source_samples):
@@ -7448,9 +7530,9 @@ def test_logs_carry_no_document_text(caplog, tmp_path, ko_sample, source_samples
 
 
 def test_a_read_failure_is_logged_by_its_reason_only(caplog, tmp_path):
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.DEBUG):
         _ingest(_write(tmp_path, "cp949.md", "문단이다.".encode("cp949")))
-    assert "cannot read the source file: NOT_UTF8" in caplog.text
+    assert _messages(caplog) == ["ERROR cannot read the source file: NOT_UTF8"]
 ```
 
 - [ ] **Step 2: 테스트가 실패하는지 확인한다**
@@ -7609,7 +7691,7 @@ def ingest(
 
 Run: `.venv/Scripts/python -m pytest tests/parsing/test_ingest.py -q`
 
-Expected: 마지막 줄이 `33 passed`
+Expected: 마지막 줄이 `42 passed`
 
 - [ ] **Step 5: 전체 검사를 돌린다**
 
@@ -7619,7 +7701,7 @@ Expected: 마지막 줄이 `33 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `904 passed`, `All checks passed!`, `29 files already formatted`
+Expected: 차례로 `913 passed`, `All checks passed!`, `29 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -7965,7 +8047,7 @@ Expected: 종료 코드 0, 출력은 아래와 같다.
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `922 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `931 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 11: 커밋한다**
 
@@ -8142,7 +8224,7 @@ python -m venv .venv
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `922 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `931 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 5: 설계의 완료 기준을 하나씩 확인한다**
 

@@ -36,7 +36,7 @@
 |---|---|---|
 | `pyproject.toml` | 패키지 정의, pytest와 ruff 설정 | 1 |
 | `constraints.txt` | 테스트를 돌려 본 정확한 버전 | 1 |
-| `.gitattributes` | `tests/fixtures/**`의 줄 끝을 LF로 고정 | 1 |
+| `.gitattributes` | `tests/fixtures/**/*.md`의 줄 끝을 LF로 고정 | 1 |
 | `.gitignore` | `out/` 추가 | 1 |
 | `config/example.env` | 환경변수 자리표시자 | 1 |
 | `app/models/document.py` | 문서, 요소, 위치 정보 | 2 |
@@ -199,7 +199,7 @@ typing-inspection==0.4.5
 
 ```text
 # Test fixtures are compared line by line and hashed: keep LF on every platform.
-tests/fixtures/** text eol=lf
+tests/fixtures/**/*.md text eol=lf
 ```
 
 `sha256`은 파일 바이트로 계산하므로 줄 끝이 바뀌면 해시가 바뀐다. 이 설정은 다음에 체크아웃할 때부터 적용되고, 이미 받아 둔 파일은 바꾸지 않는다. 테스트는 CRLF와 LF 어느 쪽에서도 통과한다.

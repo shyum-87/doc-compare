@@ -296,7 +296,7 @@ python -m app.parsing <주 파일> --doc-id <ID> --version <버전>
 pyproject.toml
 constraints.txt              테스트를 돌려 본 정확한 버전
 .gitignore
-.gitattributes               tests/fixtures/** 의 줄 끝을 LF로 고정한다
+.gitattributes               tests/fixtures/**/*.md 의 줄 끝을 LF로 고정한다
 config/example.env           자리표시자만 둔다
 app/
   models/

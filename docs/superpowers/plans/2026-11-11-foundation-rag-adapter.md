@@ -5905,7 +5905,9 @@ git push -u origin main
 
 1. 뼈대(페이지 마커와 헤딩)를 `difflib.SequenceMatcher`로 맞춘다.
 2. 맞은 뼈대 사이의 구간마다 요소의 종류가 순서대로 같으면 순번대로 짝짓는다. 다르면 구간 전체를 짝 없음으로 둔다.
-3. 표는 행 수와 열 수가 같을 때만 셀끼리 짝짓는다. 이미지는 ID가 같아야 짝이 된다.
+3. 표는 행 수와 열 수가 같을 때만 셀끼리 짝짓는다. 머리글과 모든 행의 칸 수를 따로 비교하므로, 행마다 칸 수가 다른 표는 행별 칸 수까지 같아야 한다. 이미지는 ID가 같아야 짝이 되고 파일 이름은 보지 않는다.
+
+테스트는 양쪽 문서의 요소 ID가 어긋나는 입력을 따로 둔다(원문에만 문단이 하나 더 있다). ID가 양쪽에서 같으면 발견 사항이 상대 문서의 요소나 셀을 가리켜도 드러나지 않는다.
 
 **Files:**
 - Create: `app/parsing/translation_check.py`
@@ -5936,6 +5938,19 @@ def check(make_document):
         return check_translation(translated, source)
 
     return _check
+
+
+def _where(finding):
+    """The document, the elements, the cell and the lines a finding points at."""
+    return (
+        finding.code,
+        finding.document,
+        finding.element_ids,
+        finding.counterpart_element_ids,
+        finding.cell_ref,
+        finding.line_start,
+        finding.line_end,
+    )
 
 
 @pytest.mark.parametrize("language", ["en", "vi", "zh"])
@@ -6027,6 +6042,26 @@ def test_an_ambiguous_number_is_reported_on_its_own_side(check):
     assert (findings[1].line_start, findings[1].line_end) == (3, 3)
 
 
+def test_a_finding_names_the_element_of_its_own_document(check):
+    # the source has one paragraph more, so paired elements have different IDs and lines
+    result, findings = check(
+        ["[PAGE 1]", "## 1 개요", "", "[PAGE 2]", "1,5 kg 투입"],
+        ["[PAGE 1]", "## 1 Overview", "", "Only in the source.", "", "[PAGE 2]", "Add 2,5 kg."],
+    )
+    assert [(pair.translated_ref, pair.source_ref) for pair in result.pairs] == [
+        ("e0001", "e0001"),
+        ("e0002", "e0002"),
+        ("e0003", "e0004"),
+        ("e0004", "e0005"),
+    ]
+    assert [_where(finding) for finding in findings] == [
+        ("SEGMENT_UNALIGNED", "translated", (), ("e0003",), None, None, None),
+        ("TOKEN_MISMATCH", "translated", ("e0004",), ("e0005",), None, 5, 5),
+        ("NUMBER_FORMAT_AMBIGUOUS", "translated", ("e0004",), ("e0005",), None, 5, 5),
+        ("NUMBER_FORMAT_AMBIGUOUS", "source", ("e0005",), ("e0004",), None, 7, 7),
+    ]
+
+
 def test_a_different_order_of_kinds_leaves_the_whole_segment_unpaired(check):
     result, findings = check(
         ["[PAGE 1]", "## 1 개요", "", "문단이다.", "", "- 항목", "", "[PAGE 2]", "끝 문단."],
@@ -6081,6 +6116,27 @@ def test_images_pair_only_with_the_same_id(check):
     assert findings == ()
     assert [pair.status for pair in result.pairs] == ["match", "match"]
 
+    # the ID decides, not the file name
+    _, findings = check(
+        ["[PAGE 1]", '![img001](<shot.png "화면">)'],
+        ["[PAGE 1]", '![img002](<shot.png "Screen">)'],
+    )
+    assert [finding.code for finding in findings] == ["SEGMENT_UNALIGNED"]
+
+
+def test_the_title_of_an_image_is_compared(check):
+    result, findings = check(
+        ["[PAGE 1]", '![img001](<img001.png "화면 1">)'],
+        ["[PAGE 1]", '![img001](<img001.png "Screen 2">)'],
+    )
+    assert [_where(finding) for finding in findings] == [
+        ("TOKEN_MISMATCH", "translated", ("e0002",), ("e0002",), None, 2, 2)
+    ]
+    assert (result.pairs[1].missing_tokens, result.pairs[1].extra_tokens) == (
+        ("num:2",),
+        ("num:1",),
+    )
+
 
 TABLE_KO = ["[PAGE 1]", "", "|구분|기준|", "|---|---|", "|온도|2~8℃|", "|중량|±1.0%|"]
 TABLE_EN = ["[PAGE 1]", "|Item|Limit|", "|---|---|", "|Temperature|2~8℃|", "|Weight|±1.0%|"]
@@ -6134,15 +6190,65 @@ def test_an_ambiguous_number_in_a_source_cell_points_at_the_source_line(check):
     assert (findings[1].line_start, findings[1].line_end) == (5, 5)
 
 
+# The same tables on page 2. The source has a paragraph on page 1 that the translation
+# lacks, so the two tables have different IDs (e0003 and e0004) and different lines.
+SHIFTED_KO = ["[PAGE 1]", "[PAGE 2]", *TABLE_KO[2:]]
+SHIFTED_EN = ["[PAGE 1]", "Only in the source.", "", "[PAGE 2]", "", *TABLE_EN[1:]]
+
+
+def test_a_cell_finding_names_the_table_of_its_own_document(check):
+    source = [*SHIFTED_EN[:8], "|Weight|±1,0%|"]
+    result, findings = check(SHIFTED_KO, source)
+    assert [(pair.translated_ref, pair.source_ref) for pair in result.pairs] == [
+        ("e0001", "e0001"),
+        ("e0002", "e0003"),
+        ("e0003:r0c1", "e0004:r0c1"),
+        ("e0003:r0c2", "e0004:r0c2"),
+        ("e0003:r1c1", "e0004:r1c1"),
+        ("e0003:r1c2", "e0004:r1c2"),
+        ("e0003:r2c1", "e0004:r2c1"),
+        ("e0003:r2c2", "e0004:r2c2"),
+    ]
+    assert [_where(finding) for finding in findings] == [
+        ("SEGMENT_UNALIGNED", "translated", (), ("e0002",), None, None, None),
+        ("TOKEN_MISMATCH", "translated", ("e0003",), ("e0004",), "e0003:r2c2", 6, 6),
+        ("NUMBER_FORMAT_AMBIGUOUS", "source", ("e0004",), ("e0003",), "e0004:r2c2", 9, 9),
+    ]
+
+    translated = [*SHIFTED_KO[:5], "|중량|±1,0%|"]
+    _, findings = check(translated, SHIFTED_EN)
+    assert [_where(finding) for finding in findings[1:]] == [
+        ("TOKEN_MISMATCH", "translated", ("e0003",), ("e0004",), "e0003:r2c2", 6, 6),
+        ("NUMBER_FORMAT_AMBIGUOUS", "translated", ("e0003",), ("e0004",), "e0003:r2c2", 6, 6),
+    ]
+
+
+def test_an_ambiguous_number_in_a_source_header_cell_points_at_the_source_line(check):
+    translated = [*SHIFTED_KO[:2], "|구분 1.0|기준|", *SHIFTED_KO[3:]]
+    source = [*SHIFTED_EN[:5], "|Item 1,0|Limit|", *SHIFTED_EN[6:]]
+    _, findings = check(translated, source)
+    assert [_where(finding) for finding in findings[1:]] == [
+        ("TOKEN_MISMATCH", "translated", ("e0003",), ("e0004",), "e0003:r0c1", 3, 3),
+        ("NUMBER_FORMAT_AMBIGUOUS", "source", ("e0004",), ("e0003",), "e0004:r0c1", 6, 6),
+    ]
+
+
+WIDE_KO = ["[PAGE 1]", "", "|구분|기준|비고|", "|---|---|---|", "|온도|2~8℃|-|", "|중량|±1.0%|-|"]
+
+
 @pytest.mark.parametrize(
-    "translated",
+    ("translated", "last_line"),
     [
-        TABLE_KO[:5],  # one row fewer
-        [*TABLE_KO, "|습도|60%|"],  # one row more
-        ["[PAGE 1]", "", "|구분|기준|비고|", "|---|---|---|", "|온도|2~8℃|-|", "|중량|±1.0%|-|"],
+        (TABLE_KO[:5], 5),  # one row fewer
+        ([*TABLE_KO, "|습도|60%|"], 7),  # one row more
+        (WIDE_KO, 6),  # one column more
+        # as many rows and header cells, but rows of other widths
+        ([*TABLE_KO[:4], "|온도|2~8℃|비고|", "|중량|"], 6),
+        # only the header is wider
+        (["[PAGE 1]", "", "|구분|기준|비고|", "|---|---|---|", *TABLE_KO[4:]], 6),
     ],
 )
-def test_tables_of_a_different_shape_are_not_paired(check, translated):
+def test_tables_of_a_different_shape_are_not_paired(check, translated, last_line):
     result, findings = check(translated, TABLE_EN)
     assert [finding.code for finding in findings] == ["TABLE_SHAPE_MISMATCH"]
     finding = findings[0]
@@ -6150,7 +6256,7 @@ def test_tables_of_a_different_shape_are_not_paired(check, translated):
     assert finding.element_ids == ("e0002",)
     assert finding.counterpart_element_ids == ("e0002",)
     assert finding.cell_ref is None
-    assert finding.line_start == 3
+    assert (finding.line_start, finding.line_end) == (3, last_line)  # the whole table
     assert [pair.translated_ref for pair in result.pairs] == ["e0001"]  # no cell was compared
     assert [segment.reason for segment in result.unpaired] == ["TABLE_SHAPE_MISMATCH"]
 
@@ -6176,6 +6282,30 @@ def test_a_missing_heading_leaves_its_surroundings_unpaired(check):
     ]
 
 
+def test_a_heading_only_the_translation_has(check):
+    result, findings = check(
+        ["[PAGE 1]", "## 1 개요", "", "문단 1.", "", "## 2 범위", "", "문단 2.", "[PAGE 2]", "끝."],
+        ["[PAGE 1]", "## 1 Overview", "", "One.", "", "Two.", "", "[PAGE 2]", "End."],
+    )
+    assert [_where(finding) for finding in findings] == [
+        (
+            "SKELETON_MISMATCH",
+            "translated",
+            ("e0003", "e0004", "e0005"),
+            ("e0003", "e0004"),
+            None,
+            4,
+            8,
+        )
+    ]
+    assert [(pair.translated_ref, pair.source_ref) for pair in result.pairs] == [
+        ("e0001", "e0001"),
+        ("e0002", "e0002"),
+        ("e0006", "e0005"),
+        ("e0007", "e0006"),
+    ]
+
+
 def test_a_different_page_number_is_a_skeleton_mismatch(check):
     result, findings = check(
         ["[PAGE 1]", "문단 1.", "", "[PAGE 2]", "문단 2."],
@@ -6195,6 +6325,27 @@ def test_a_different_heading_number_is_a_skeleton_mismatch(check):
     assert [finding.code for finding in findings] == ["SKELETON_MISMATCH"]
     assert findings[0].element_ids == ("e0003",)
     assert findings[0].counterpart_element_ids == ("e0003",)
+
+
+def test_a_different_heading_level_is_a_skeleton_mismatch(check):
+    result, findings = check(["[PAGE 1]", "## 1 개요"], ["[PAGE 1]", "### 1 Overview"])
+    assert [finding.code for finding in findings] == ["SKELETON_MISMATCH"]
+    assert findings[0].element_ids == ("e0002",)
+    assert findings[0].counterpart_element_ids == ("e0002",)
+    assert [pair.translated_ref for pair in result.pairs] == ["e0001"]
+
+
+@pytest.mark.parametrize("pages", [3, 120])
+def test_a_long_document_is_matched_like_a_short_one(check, pages):
+    # Every page has the same unnumbered heading and the page numbers never agree, so
+    # the headings are the only anchors. difflib leaves out items that come up often
+    # once a sequence has 200 of them, unless it is told not to (autojunk).
+    translated = [line for page in range(pages) for line in (f"[PAGE {page + 1}]", "## 주의")]
+    source = [line for page in range(pages) for line in (f"[PAGE {page + 501}]", "## Caution")]
+    result, findings = check(translated, source)
+    assert len(result.pairs) == pages
+    assert {finding.code for finding in findings} == {"SKELETON_MISMATCH"}
+    assert len(findings) == pages  # one page marker on each side before every heading
 
 
 def test_documents_with_nothing_in_common(check):
@@ -6481,7 +6632,7 @@ def check_translation(
 
 Run: `.venv/Scripts/python -m pytest tests/parsing/test_translation_check.py -q`
 
-Expected: 마지막 줄이 `22 passed`
+Expected: 마지막 줄이 `32 passed`
 
 - [ ] **Step 5: 전체 검사를 돌린다**
 
@@ -6491,7 +6642,7 @@ Expected: 마지막 줄이 `22 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `805 passed`, `All checks passed!`, `24 files already formatted`
+Expected: 차례로 `815 passed`, `All checks passed!`, `24 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6710,7 +6861,7 @@ Expected: 마지막 줄이 `24 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `829 passed`, `All checks passed!`, `25 files already formatted`
+Expected: 차례로 `839 passed`, `All checks passed!`, `25 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -6935,7 +7086,7 @@ Expected: 마지막 줄이 `23 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `852 passed`, `All checks passed!`, `27 files already formatted`
+Expected: 차례로 `862 passed`, `All checks passed!`, `27 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -7398,7 +7549,7 @@ Expected: 마지막 줄이 `33 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `885 passed`, `All checks passed!`, `29 files already formatted`
+Expected: 차례로 `895 passed`, `All checks passed!`, `29 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -7744,7 +7895,7 @@ Expected: 종료 코드 0, 출력은 아래와 같다.
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `903 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `913 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 11: 커밋한다**
 
@@ -7921,7 +8072,7 @@ python -m venv .venv
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `903 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `913 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 5: 설계의 완료 기준을 하나씩 확인한다**
 

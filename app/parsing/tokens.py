@@ -53,6 +53,8 @@ _NUMBER_RE = re.compile(r"[0-9]+(?:[.,][0-9]+)*")
 _CODE_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
 # After a code: the next word is a code of its own (a run that holds a digit).
 _NEXT_CODE_RE = re.compile(r" [A-Za-z][A-Za-z_-]*[0-9]")
+# After letters: a negative exponent as normalize() writes it ('m⁻²' -> 'm^-2').
+_NEGATIVE_EXPONENT_RE = re.compile(r"\^-[0-9]+")
 _ASCII_LETTERS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 _ASCII_DIGITS = frozenset("0123456789")
 _ASCII_ALNUM = _ASCII_LETTERS | _ASCII_DIGITS
@@ -157,6 +159,12 @@ def extract_tokens(text: str, language: Language) -> Tokens:
             word = match.group().rstrip("-_")
             if any(letter in _ASCII_DIGITS for letter in word):
                 others.append("code:" + word)
+            else:
+                # 'kg·m⁻²': the letters before a negative exponent stay, as in 'm-2'. The
+                # sign and the number of the exponent are still read after this.
+                exponent = _NEGATIVE_EXPONENT_RE.match(scanned, match.end())
+                if exponent is not None:
+                    others.append("code:" + word + exponent.group()[1:])
             position = match.end()
             ends_in_digit = scanned[position - 1] in _ASCII_DIGITS
             if ends_in_digit and not _NEXT_CODE_RE.match(scanned, position):

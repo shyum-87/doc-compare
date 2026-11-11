@@ -46,6 +46,7 @@ def _others(text, language="ko"):
         ("Ca²⁺", "Ca2+"),
         ("m⁻³", "m^-3"),  # a sign right before a superscript digit is marked anywhere
         ("cm⁻¹", "cm^-1"),
+        ("℃⁻¹", "°C^-1"),  # after a unit that is not a letter too
         ("m⁺²", "m^+2"),
         ("Na⁺", "Na+"),  # no superscript digit after the sign: no mark
         ("A⁺⁻", "A+-"),
@@ -177,8 +178,8 @@ def test_a_superscript_after_a_letter_reads_like_the_plain_character(with_supers
     [
         ("입자 3520 m⁻³", ["3520", "3"], ["unit:m", "sym:neg"]),
         ("1000 cm⁻¹", ["1000", "1"], ["unit:cm", "sym:neg"]),
-        ("5 kg·m⁻²", ["5", "2"], ["unit:kg", "sym:neg"]),
-        ("조도 (W/m⁻²)", ["2"], ["sym:neg"]),
+        ("5 kg·m⁻²", ["5", "2"], ["unit:kg", "code:m-2", "sym:neg"]),
+        ("조도 (W/m⁻²)", ["2"], ["code:m-2", "sym:neg"]),
         ("5 m⁺²", ["5", "2"], ["unit:m"]),
         ("Na⁺ 5 mg", ["5"], ["unit:mg"]),  # a charge, not the sign of a number
     ],
@@ -190,10 +191,51 @@ def test_the_sign_of_a_superscript_number_after_a_letter_is_kept(text, numbers, 
 
 @pytest.mark.parametrize(
     "negative, positive",
-    [("3520 m⁻³", "3520 m³"), ("1000 cm⁻¹", "1000 cm¹"), ("5 m⁻²", "5 m⁺²")],
+    [
+        ("3520 m⁻³", "3520 m³"),
+        ("1000 cm⁻¹", "1000 cm¹"),
+        ("5 m⁻²", "5 m⁺²"),
+        ("5 ℃⁻¹", "5 ℃¹"),
+    ],
 )
 def test_a_negative_superscript_does_not_read_like_a_positive_one(negative, positive):
     assert extract_tokens(negative, "ko") != extract_tokens(positive, "ko")
+
+
+@pytest.mark.parametrize(
+    "text, numbers, others",
+    [
+        ("회전수 1500 min⁻¹", ["1500", "1"], ["code:min-1", "sym:neg"]),
+        ("1500 s⁻¹", ["1500", "1"], ["code:s-1", "sym:neg"]),
+        ("5 mg·L⁻¹", ["5", "1"], ["unit:mg", "code:L-1", "sym:neg"]),
+        ("파수 (cm⁻¹)", ["1"], ["code:cm-1", "sym:neg"]),
+        ("5 N-m⁻¹", ["5", "1"], ["code:N-m-1", "sym:neg"]),  # the whole run of letters
+        ("m⁻²³", ["23"], ["code:m-23", "sym:neg"]),  # every digit of the exponent
+        ("m^-2", ["2"], ["code:m-2", "sym:neg"]),  # written with the mark itself
+        ("A1b⁻²", ["2"], ["code:A1b", "sym:neg"]),  # a code already: no second one
+        ("m ⁻²", ["2"], ["sym:neg"]),  # the exponent is not right after the letters
+        ("m⁺²", ["2"], []),  # only a negative exponent
+        ("m^2", ["2"], []),
+        ("m^- 2", ["2"], []),  # no digit right after the sign
+    ],
+)
+def test_the_letters_before_a_negative_exponent_are_kept_as_a_code(text, numbers, others):
+    assert _numbers(text) == numbers
+    assert _others(text) == others
+
+
+@pytest.mark.parametrize(
+    "one, other",
+    [
+        ("회전수 1500 min⁻¹", "Speed 1500 s⁻¹"),
+        ("5 kg·m⁻²", "5 kg·cm⁻²"),
+        ("5 mg·L⁻¹", "5 mg·mL⁻¹"),
+        ("밀도 1.2 g·cm⁻³", "Density 1.2 g·m⁻³"),
+        ("파수 (cm⁻¹)", "Wavenumber (mm⁻¹)"),
+    ],
+)
+def test_other_letters_before_a_negative_exponent_do_not_read_alike(one, other):
+    assert extract_tokens(one, "ko") != extract_tokens(other, "ko")
 
 
 @pytest.mark.parametrize(
@@ -309,6 +351,7 @@ def test_scanning_goes_on_after_the_unit():
         ("C-500 mg-", ["code:C-500", "unit:mg"]),  # no digit in the run: still a unit
         ("A-5 mg-kg", ["code:A-5", "unit:mg"]),
         ("A-5 kg 와 B2", ["code:A-5", "unit:kg", "code:B2"]),  # a code further on
+        ("A-5 kg 10", ["code:A-5", "unit:kg"]),  # a number further on
         ("BK01 %5", ["code:BK01", "unit:%"]),  # a unit that is not a letter starts no code
         ("A-5 m⁻²", ["code:A-5", "unit:m", "sym:neg"]),
         ("CO2 5%", ["code:CO2", "unit:%"]),

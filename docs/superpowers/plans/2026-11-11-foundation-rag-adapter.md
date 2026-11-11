@@ -6928,12 +6928,28 @@ git push -u origin main
 
 from __future__ import annotations
 
+from typing import get_args
+
 import pytest
 
-from app.models.findings import new_finding
+from app.models.findings import INFO_CODES, FindingCode, new_finding
 from app.parsing.quality import blocked_element_ids, decide_status
 
 LINES = ["[PAGE 1]", "## 1 개요", "", "문단 1.", "", "문단 2."]  # e0001 .. e0004
+REVIEW_CODES = [
+    "UNCLASSIFIED_LINE",
+    "AMBIGUOUS_LIST_OR_NEGATIVE",
+    "TABLE_ROW_WIDTH_MISMATCH",
+    "NO_PAGE_MARKER",
+    "CONTENT_BEFORE_FIRST_PAGE",
+    "PAGE_NUMBER_NOT_INCREASING",
+    "SOURCE_NOT_PROVIDED",
+    "SKELETON_MISMATCH",
+    "SEGMENT_UNALIGNED",
+    "TABLE_SHAPE_MISMATCH",
+    "TOKEN_MISMATCH",
+    "NUMBER_FORMAT_AMBIGUOUS",
+]
 
 
 @pytest.fixture
@@ -6958,27 +6974,24 @@ def test_info_findings_alone_are_ok():
     assert decide_status(findings) == "OK"
 
 
-@pytest.mark.parametrize(
-    "code",
-    [
-        "UNCLASSIFIED_LINE",
-        "AMBIGUOUS_LIST_OR_NEGATIVE",
-        "TABLE_ROW_WIDTH_MISMATCH",
-        "NO_PAGE_MARKER",
-        "CONTENT_BEFORE_FIRST_PAGE",
-        "PAGE_NUMBER_NOT_INCREASING",
-        "SOURCE_NOT_PROVIDED",
-        "SKELETON_MISMATCH",
-        "SEGMENT_UNALIGNED",
-        "TABLE_SHAPE_MISMATCH",
-        "TOKEN_MISMATCH",
-        "NUMBER_FORMAT_AMBIGUOUS",
-    ],
-)
+def test_every_code_that_is_not_info_is_in_the_list_of_review_codes():
+    """A code added to the model later cannot stay out of the test below."""
+    assert sorted(REVIEW_CODES) == sorted(set(get_args(FindingCode)) - INFO_CODES)
+
+
+@pytest.mark.parametrize("code", REVIEW_CODES)
 def test_one_review_finding_is_enough(code):
     findings = [
         new_finding("IMAGE_PRESENT", "source", element_ids=("e0003",)),
         new_finding(code, "source"),
+    ]
+    assert decide_status(findings) == "REVIEW_REQUIRED"
+
+
+def test_a_review_finding_counts_wherever_it_stands():
+    findings = [
+        new_finding("TOKEN_MISMATCH", "translated", element_ids=("e0004",)),
+        new_finding("IMAGE_PRESENT", "source", element_ids=("e0003",)),
     ]
     assert decide_status(findings) == "REVIEW_REQUIRED"
 
@@ -7030,7 +7043,12 @@ def test_a_finding_raised_on_the_source_side(translated, source):
 def test_info_findings_block_nothing(translated, source):
     findings = [
         new_finding("IMAGE_PRESENT", "translated", element_ids=("e0003",)),
-        new_finding("HEADING_NUMBER_MISMATCH", "source", element_ids=("e0002",)),
+        new_finding(
+            "HEADING_NUMBER_MISMATCH",
+            "source",
+            element_ids=("e0002",),
+            counterpart_element_ids=("e0002",),
+        ),
     ]
     assert blocked_element_ids(translated, findings) == frozenset()
     assert blocked_element_ids(source, findings) == frozenset()
@@ -7041,6 +7059,20 @@ def test_a_document_scope_finding_blocks_the_whole_document(translated, source, 
     finding = new_finding(code, "translated")
     assert blocked_element_ids(translated, [finding]) == {"e0001", "e0002", "e0003", "e0004"}
     assert blocked_element_ids(source, [finding]) == frozenset()
+
+
+def test_a_document_scope_finding_of_the_source_blocks_the_whole_source(translated, source):
+    finding = new_finding("NO_PAGE_MARKER", "source")
+    assert blocked_element_ids(source, [finding]) == {"e0001", "e0002", "e0003", "e0004"}
+    assert blocked_element_ids(translated, [finding]) == frozenset()
+
+
+def test_a_document_scope_finding_counts_after_other_findings(translated):
+    findings = [
+        new_finding("TOKEN_MISMATCH", "translated", element_ids=("e0004",)),
+        new_finding("NO_PAGE_MARKER", "translated"),
+    ]
+    assert blocked_element_ids(translated, findings) == {"e0001", "e0002", "e0003", "e0004"}
 
 
 def test_findings_add_up(translated):
@@ -7114,7 +7146,7 @@ def blocked_element_ids(document: Document, findings: Iterable[Finding]) -> froz
 
 Run: `.venv/Scripts/python -m pytest tests/parsing/test_quality.py -q`
 
-Expected: 마지막 줄이 `23 passed`
+Expected: 마지막 줄이 `27 passed`
 
 - [ ] **Step 5: 전체 검사를 돌린다**
 
@@ -7124,7 +7156,7 @@ Expected: 마지막 줄이 `23 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `867 passed`, `All checks passed!`, `27 files already formatted`
+Expected: 차례로 `871 passed`, `All checks passed!`, `27 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -7587,7 +7619,7 @@ Expected: 마지막 줄이 `33 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `900 passed`, `All checks passed!`, `29 files already formatted`
+Expected: 차례로 `904 passed`, `All checks passed!`, `29 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -7933,7 +7965,7 @@ Expected: 종료 코드 0, 출력은 아래와 같다.
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `918 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `922 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 11: 커밋한다**
 
@@ -8110,7 +8142,7 @@ python -m venv .venv
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `918 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `922 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 5: 설계의 완료 기준을 하나씩 확인한다**
 

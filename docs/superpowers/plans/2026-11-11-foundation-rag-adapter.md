@@ -6054,12 +6054,32 @@ def test_a_finding_names_the_element_of_its_own_document(check):
         ("e0003", "e0004"),
         ("e0004", "e0005"),
     ]
-    assert [_where(finding) for finding in findings] == [
-        ("SEGMENT_UNALIGNED", "translated", (), ("e0003",), None, None, None),
+    # findings[0] is about the paragraph only the source has
+    assert [_where(finding) for finding in findings[1:]] == [
         ("TOKEN_MISMATCH", "translated", ("e0004",), ("e0005",), None, 5, 5),
         ("NUMBER_FORMAT_AMBIGUOUS", "translated", ("e0004",), ("e0005",), None, 5, 5),
         ("NUMBER_FORMAT_AMBIGUOUS", "source", ("e0005",), ("e0004",), None, 7, 7),
     ]
+
+
+def test_the_text_is_compared_not_the_line_as_written(check):
+    # compared as written, the emphasis marks would cut the unit off from its number
+    result, findings = check(["[PAGE 1]", "오븐 **180**℃"], ["[PAGE 1]", "Oven 180℃"])
+    assert findings == ()
+    assert [pair.status for pair in result.pairs] == ["match", "match"]
+
+
+def test_page_markers_are_compared_by_their_number_only(check):
+    result, findings = check(["[PAGE1]", "문단."], ["[PAGE 1]", "A paragraph."])
+    assert findings == ()
+    assert [pair.status for pair in result.pairs] == ["match", "match"]
+
+
+def test_the_number_of_a_heading_is_not_compared_as_a_token(check):
+    # as a token, 1.000 is one in the Korean translation and a thousand in Vietnamese
+    result, findings = check(["[PAGE 1]", "## 1.000 총칙"], ["[PAGE 1]", "## 1.000 Quy định"], "vi")
+    assert findings == ()
+    assert [pair.status for pair in result.pairs] == ["match", "match"]
 
 
 def test_a_different_order_of_kinds_leaves_the_whole_segment_unpaired(check):
@@ -6122,6 +6142,17 @@ def test_images_pair_only_with_the_same_id(check):
         ["[PAGE 1]", '![img002](<shot.png "Screen">)'],
     )
     assert [finding.code for finding in findings] == ["SEGMENT_UNALIGNED"]
+
+
+def test_an_unpaired_image_names_the_element_of_its_own_document(check):
+    _, findings = check(
+        ["[PAGE 1]", "[PAGE 2]", '![img001](<img001.png "화면">)'],
+        ["[PAGE 1]", "Only in the source.", "", "[PAGE 2]", '![img002](<img002.png "Screen">)'],
+    )
+    # findings[0] is about the paragraph only the source has
+    assert [_where(finding) for finding in findings[1:]] == [
+        ("SEGMENT_UNALIGNED", "translated", ("e0003",), ("e0004",), None, 3, 3)
+    ]
 
 
 def test_the_title_of_an_image_is_compared(check):
@@ -6209,8 +6240,7 @@ def test_a_cell_finding_names_the_table_of_its_own_document(check):
         ("e0003:r2c1", "e0004:r2c1"),
         ("e0003:r2c2", "e0004:r2c2"),
     ]
-    assert [_where(finding) for finding in findings] == [
-        ("SEGMENT_UNALIGNED", "translated", (), ("e0002",), None, None, None),
+    assert [_where(finding) for finding in findings[1:]] == [
         ("TOKEN_MISMATCH", "translated", ("e0003",), ("e0004",), "e0003:r2c2", 6, 6),
         ("NUMBER_FORMAT_AMBIGUOUS", "source", ("e0004",), ("e0003",), "e0004:r2c2", 9, 9),
     ]
@@ -6259,6 +6289,14 @@ def test_tables_of_a_different_shape_are_not_paired(check, translated, last_line
     assert (finding.line_start, finding.line_end) == (3, last_line)  # the whole table
     assert [pair.translated_ref for pair in result.pairs] == ["e0001"]  # no cell was compared
     assert [segment.reason for segment in result.unpaired] == ["TABLE_SHAPE_MISMATCH"]
+
+
+def test_rows_of_the_same_widths_in_another_order_are_a_different_shape(check):
+    _, findings = check(
+        ["[PAGE 1]", "|구분|기준|", "|---|---|", "|온도|2~8℃|비고|", "|중량|"],
+        ["[PAGE 1]", "|Item|Limit|", "|---|---|", "|Temperature|", "|Weight|1.0%|-|"],
+    )
+    assert [finding.code for finding in findings] == ["TABLE_SHAPE_MISMATCH"]
 
 
 def test_a_missing_heading_leaves_its_surroundings_unpaired(check):
@@ -6632,7 +6670,7 @@ def check_translation(
 
 Run: `.venv/Scripts/python -m pytest tests/parsing/test_translation_check.py -q`
 
-Expected: 마지막 줄이 `32 passed`
+Expected: 마지막 줄이 `37 passed`
 
 - [ ] **Step 5: 전체 검사를 돌린다**
 
@@ -6642,7 +6680,7 @@ Expected: 마지막 줄이 `32 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `815 passed`, `All checks passed!`, `24 files already formatted`
+Expected: 차례로 `820 passed`, `All checks passed!`, `24 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6861,7 +6899,7 @@ Expected: 마지막 줄이 `24 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `839 passed`, `All checks passed!`, `25 files already formatted`
+Expected: 차례로 `844 passed`, `All checks passed!`, `25 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -7086,7 +7124,7 @@ Expected: 마지막 줄이 `23 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `862 passed`, `All checks passed!`, `27 files already formatted`
+Expected: 차례로 `867 passed`, `All checks passed!`, `27 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -7549,7 +7587,7 @@ Expected: 마지막 줄이 `33 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `895 passed`, `All checks passed!`, `29 files already formatted`
+Expected: 차례로 `900 passed`, `All checks passed!`, `29 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -7895,7 +7933,7 @@ Expected: 종료 코드 0, 출력은 아래와 같다.
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `913 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `918 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 11: 커밋한다**
 
@@ -8072,7 +8110,7 @@ python -m venv .venv
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `913 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `918 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 5: 설계의 완료 기준을 하나씩 확인한다**
 

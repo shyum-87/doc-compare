@@ -72,10 +72,11 @@
 **파서**
 
 - 페이지 마커 자신의 `section_path`는 바로 앞 헤딩까지의 경로다.
-- "가리는 문자"는 스스로는 아무것도 그리지 않아 `[PAGE 9]`나 `### 3.1`을 규칙에서 가릴 수 있는 문자다: 공백이 아니면서 유니코드 범주가 Cc·Cf(제어 문자, BOM, 폭 없는 공백, 방향 표시)나 Mn·Me(결합 문자)이거나, 빈칸으로 그려지는 글자 다섯 개(U+115F, U+1160, U+3164, U+FFA0, U+2800) 중 하나인 문자. 사용자 지정 영역(Co)과 미배정(Cn) 문자는 넣지 않는다.
-- 앞뒤 공백을 뗀 줄이 가리는 문자로 시작하면 어떤 규칙으로도 해석하지 않고 미분류로 둔다. 문자를 지우고 해석하지 않는다(추측하지 않는다).
+- "가리는 문자"는 스스로는 아무것도 그리지 않아 `[PAGE 9]`나 `### 3.1`을 규칙에서 가릴 수 있는 문자다: 유니코드 범주가 Cc·Cf(제어 문자, BOM, 폭 없는 공백, 방향 표시), Cn(문자가 배정되지 않은 코드 포인트), Mn·Me(결합 문자)이거나, 빈칸으로 그려지는 글자 다섯 개(U+115F, U+1160, U+3164, U+FFA0, U+2800) 중 하나인 문자. 탭만 예외다. 공백류(범주 Zs)는 눈에 보이는 간격이라 넣지 않고, 사용자 지정 영역(Co)은 글리프로 그려지므로 넣지 않는다. 미배정 여부는 파이썬의 유니코드 버전에 따라 달라진다. 새 유니코드에서만 배정된 문자로 시작하는 줄은 옛 파이썬에서 미분류가 된다(소리 없이 틀리지 않고 드러나는 쪽으로 어긋난다).
+- 앞뒤 공백을 뗀 줄이 가리는 문자로 시작하거나, 줄 가운데에 다른 도구가 줄바꿈으로 보는 문자(세로 탭, 폼 피드, U+001C~U+001E, U+0085, U+2028, U+2029)가 있으면 어떤 규칙으로도 해석하지 않고 미분류로 둔다. 줄 끝에 붙은 그런 문자는 공백처럼 떼어 낸다. 문자를 지우고 해석하지 않는다(추측하지 않는다).
 - `[PAGE`는 예약된 표시다. 가리는 문자·`*`·공백을 빼고 대소문자 구분 없이 봤을 때 `[PAGE`가 들어 있는 줄은 줄 전체가 페이지 마커이거나, 아니면 미분류다(`**[PAGE 9]**`, 안쪽에 폭 없는 공백이 낀 `[PAGE 9]`, 본문 끝에 붙은 `…다.[PAGE 9]`, 문장 안의 `[Page 3]`). 표의 둘째 줄부터는 표 규칙이 먼저 가져가므로 이 검사를 받지 않는다.
-- 헤딩 제목이 가리는 문자로 시작하거나, 가리는 문자를 뺐을 때 읽히는 조항 번호가 달라지면 그 줄은 미분류다. 낱말 안의 결합 문자(분해형 베트남어 등)와 번호에서 떨어진 가리는 문자는 그대로 둔다.
+- 헤딩에서 읽은 조항 번호는 가리는 문자와 `*`를 모두 뺀 글에서 읽은 번호와 같아야 한다. 다르거나, `*`와 공백 뒤 첫 글자가 가리는 문자면 그 줄은 미분류다(`### **<폭 없는 공백>**3.1 조회`, `### *3.1* 조회`, `### ** 3.1 조회 **`). 낱말 안의 결합 문자(분해형 베트남어 등)와 번호에서 떨어진 가리는 문자는 그대로 둔다.
+- 생김새만 비슷한 표시(전각 `［PAGE 9］`, `【PAGE 9】`, 번역된 `[페이지 9]` 등)는 접어서 읽지 않고 문단으로 둔다. 단위 ①에서는 다루지 않는다.
 - 페이지 번호와 조항 번호는 ASCII 숫자(`0`~`9`)만 인정한다. 페이지 번호는 6자리까지다. 조항 번호는 `**`를 벗긴 제목에서 읽는다(`## **3. 제조**`의 번호는 `3`).
 - 규칙 8(미분류) 중 코드 펜스(` ``` `, `~~~`), `>` 인용, 구분선(`---`, `***`, `___`), HTML 태그 줄은 규칙 6(목록 항목)보다 먼저 검사한다. 그러지 않으면 `---`와 `***`가 목록 항목으로 읽힌다.
 - 표 발견 항목의 줄 번호는 어긋난 그 행의 줄이다.
@@ -1143,7 +1144,7 @@ git push -u origin main
 
 ### Task 5: 파서 — 빈 줄, 페이지 마커, 헤딩, 문단
 
-설계 §5의 규칙 1, 2, 3, 7과 §4.3, §5.3. 형식이 어긋난 `[PAGE x]`와 공백 없는 `##제목`, 가리는 문자로 시작하는 줄, `[PAGE`가 들어 있는데 줄 전체가 페이지 마커가 아닌 줄, 가리는 문자가 조항 번호를 바꾸는 헤딩은 미분류로 둔다(규칙 8의 일부). 페이지 번호와 조항 번호는 ASCII 숫자만 인정하고, 조항 번호는 `**`를 벗긴 제목에서 읽는다. 표, 이미지, 목록은 다음 Task들에서 넣는다. 이 Task가 끝난 시점에는 그런 줄이 문단으로 읽힌다.
+설계 §5의 규칙 1, 2, 3, 7과 §4.3, §5.3. 형식이 어긋난 `[PAGE x]`와 공백 없는 `##제목`, 가리는 문자로 시작하는 줄, 줄 가운데에 줄바꿈 문자가 있는 줄, `[PAGE`가 들어 있는데 줄 전체가 페이지 마커가 아닌 줄, 가리는 문자나 `*`가 조항 번호를 바꾸는 헤딩은 미분류로 둔다(규칙 8의 일부). 페이지 번호와 조항 번호는 ASCII 숫자만 인정하고, 조항 번호는 `**`를 벗긴 제목에서 읽는다. 표, 이미지, 목록은 다음 Task들에서 넣는다. 이 Task가 끝난 시점에는 그런 줄이 문단으로 읽힌다.
 
 **Files:**
 - Create: `app/parsing/line_parser.py`
@@ -1287,6 +1288,8 @@ def test_a_malformed_page_marker_is_unclassified(parse, line):
         "[PAGE 9]\N{ZERO WIDTH SPACE}",
         "본문이 끝난다.[PAGE 9]",
         "## 3.1 조회 [page 9]",
+        "- [PAGE 9]",
+        "[" + chr(0x2065) + "PAGE 9]",  # a code point with no character assigned
     ],
 )
 def test_a_line_that_holds_a_page_marker_and_more_is_unclassified(parse, line):
@@ -1397,6 +1400,11 @@ def test_a_malformed_heading_is_unclassified(parse, line):
         "\N{BRAILLE PATTERN BLANK}",
         "\N{COMBINING GRAPHEME JOINER}",
         "\N{COMBINING ENCLOSING CIRCLE}",
+        "\N{ARABIC NUMBER SIGN}",  # a format character, though this one is drawn
+        chr(0x2065),  # no character assigned, and ignored when text is drawn
+        chr(0xE0080),  # the same, outside the basic plane
+        chr(0xFFFF),  # never a character
+        chr(0x180F),  # assigned only in newer Unicode versions, as a combining mark
     ],
 )
 @pytest.mark.parametrize("rest", ["[PAGE 9]", "### 3.1 조회", "본문이다."])
@@ -1421,6 +1429,51 @@ def test_a_hiding_character_is_found_behind_the_indent(parse):
     assert [finding.code for finding in findings] == ["UNCLASSIFIED_LINE"]
 
 
+def test_a_private_use_character_is_ordinary_text(parse):
+    line = chr(0xE000) + " 원료를 투입한다."  # fonts draw these, often as a bullet
+    elements, findings = parse("[PAGE 1]\n" + line)
+    assert elements[1].kind == "paragraph"
+    assert elements[1].text == line
+    assert findings == ()
+
+
+@pytest.mark.parametrize(
+    "mark",
+    [
+        "\x0b",
+        "\x0c",
+        "\x1c",
+        "\x1d",
+        "\x1e",
+        "\x85",
+        "\N{LINE SEPARATOR}",
+        "\N{PARAGRAPH SEPARATOR}",
+    ],
+)
+@pytest.mark.parametrize("rest", ["### 3.1 조회", "| 가 | 나 |", "둘째 줄이다."])
+def test_a_line_that_other_tools_would_break_in_two_is_not_interpreted(parse, mark, rest):
+    line = "첫 줄이다." + mark + rest
+    elements, findings = parse("[PAGE 8]\n## 3. 제조\n" + line + "\n문단이다.")
+    assert elements[2].kind == "unclassified"
+    assert elements[2].raw == line
+    assert elements[2].text == line  # the character is kept, not removed
+    assert [finding.code for finding in findings] == ["UNCLASSIFIED_LINE"]
+    assert findings[0].element_ids == ("e0003",)
+    assert elements[3].kind == "paragraph"
+    assert elements[3].locator.section_path == ("3",)
+
+
+def test_a_break_character_at_the_edge_of_a_line_is_trimmed_like_a_space(parse):
+    # a form feed in front of a page marker is what a page break leaves behind
+    elements, findings = parse("\x0c[PAGE 9]\N{LINE SEPARATOR}\n\x1c\n문단이다.")
+    assert [element.kind for element in elements] == ["page_marker", "paragraph"]
+    assert elements[0].page == 9
+    assert elements[0].text == "[PAGE 9]"
+    assert elements[0].raw == "\x0c[PAGE 9]\N{LINE SEPARATOR}"
+    assert elements[1].locator.line_start == 3  # the line with only \x1c is blank
+    assert findings == ()
+
+
 @pytest.mark.parametrize(
     "line",
     [
@@ -1432,6 +1485,16 @@ def test_a_hiding_character_is_found_behind_the_indent(parse):
         "### 3.1 \N{ZERO WIDTH SPACE}",
         "## \N{HANGUL FILLER}",
         "## \N{ZERO WIDTH SPACE}주의 사항",
+        "## **\N{ZERO WIDTH SPACE}주의** 사항",
+        "## ** \N{ZERO WIDTH SPACE}주의** 사항",
+        "### **\N{ZERO WIDTH SPACE}**3.1 조회",
+        "### ****\N{ZERO WIDTH SPACE}****3.1 조회",
+        "### 1\x1f0. 조회",  # \x1f counts as white space, and shows nothing
+        "### 3.\x1f1 조회",
+        "### 3.1\x1f조회",
+        "### 3" + chr(0x2065) + ".1 조회",
+        "### ** 3.1 조회 **",
+        "### *3.1* 조회",
     ],
 )
 def test_a_heading_that_a_hiding_character_changes_is_unclassified(parse, line):
@@ -1451,6 +1514,10 @@ def test_a_heading_that_a_hiding_character_changes_is_unclassified(parse, line):
         ("## " + SAN_XUAT, None, SAN_XUAT),
         ("### 3.1 조\N{ZERO WIDTH SPACE}회", "3.1", "조\N{ZERO WIDTH SPACE}회"),
         ("### 3.1\t조회", "3.1", "조회"),
+        ("### 3.1\N{NO-BREAK SPACE}조회", "3.1", "조회"),  # a space is a gap one can see
+        ("### 3.1\N{IDEOGRAPHIC SPACE}조회", "3.1", "조회"),
+        ("### 3.1 조회*", "3.1", "조회*"),
+        ("## 2 * 3 계산", "2", "* 3 계산"),
     ],
 )
 def test_a_hiding_character_away_from_the_number_leaves_the_heading_alone(
@@ -1553,9 +1620,9 @@ _HEADING_RE = re.compile(r"(#{1,6}) +(\S.*)")
 _HEADING_NUMBER_RE = re.compile(r"([0-9]+(?:\.[0-9]+)*)\.?\s+(\S.*)")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
-# characters that show nothing of their own: control and format characters, combining
-# marks, and letters that are drawn blank
-_HIDING_CATEGORIES = ("Cc", "Cf", "Mn", "Me")
+# characters that show nothing of their own: control and format characters, code points
+# with no character assigned, combining marks, and letters that are drawn blank
+_HIDING_CATEGORIES = ("Cc", "Cf", "Cn", "Mn", "Me")
 _BLANK_LETTERS = frozenset(
     "\N{HANGUL CHOSEONG FILLER}\N{HANGUL JUNGSEONG FILLER}\N{HANGUL FILLER}"
     "\N{HALFWIDTH HANGUL FILLER}\N{BRAILLE PATTERN BLANK}"
@@ -1569,7 +1636,7 @@ def clean_text(value: str) -> str:
 
 def _hides(char: str) -> bool:
     """True for a character that shows nothing of its own and so can hide a marker."""
-    if char.isspace():
+    if char == "\t":
         return False
     return unicodedata.category(char) in _HIDING_CATEGORIES or char in _BLANK_LETTERS
 
@@ -1589,9 +1656,16 @@ def _split_heading(rest: str) -> tuple[Optional[str], str]:
 
 
 def _reads_plainly(rest: str) -> bool:
-    """False when a hiding character opens the heading or changes the number read from it."""
-    seen = "".join(char for char in rest if not _hides(char))
-    return not _hides(rest[0]) and _split_heading(rest)[0] == _split_heading(seen)[0]
+    """False when a hiding character opens the heading or keeps its number from being read.
+
+    The number read from the heading must be the number that is left once the hiding
+    characters and every '*' are taken out.
+    """
+    shown = "".join(char for char in rest if not (_hides(char) or char == "*")).strip()
+    opening = rest.lstrip("* \t")[:1]
+    if any(map(_hides, opening)):
+        return False
+    return _split_heading(rest)[0] == _split_heading(shown)[0]
 
 
 class _Builder:
@@ -1693,9 +1767,9 @@ def parse_lines(
         if not stripped:
             continue
 
-        # a line that starts with a hiding character is not interpreted:
-        # the character would hide a marker from every rule below
-        if _hides(stripped[0]):
+        # a line that starts with a hiding character, or that holds a character other
+        # tools end a line at, is not interpreted: a marker could be hidden in it
+        if _hides(stripped[0]) or len(stripped.splitlines()) > 1:
             builder.unclassified(stripped, line_no, raw)
             continue
 
@@ -1730,7 +1804,7 @@ def parse_lines(
 
 Run: `.venv/Scripts/python -m pytest tests/parsing/test_parser_basics.py -q`
 
-Expected: 마지막 줄이 `98 passed`
+Expected: 마지막 줄이 `155 passed`
 
 - [ ] **Step 6: 전체 검사를 돌린다**
 
@@ -1740,7 +1814,7 @@ Expected: 마지막 줄이 `98 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `170 passed`, `All checks passed!`, `12 files already formatted`
+Expected: 차례로 `227 passed`, `All checks passed!`, `12 files already formatted`
 
 - [ ] **Step 7: 커밋한다**
 
@@ -1844,6 +1918,37 @@ def test_a_number_that_only_starts_with_the_same_digits_is_a_mismatch(parse):
 def test_findings_name_the_document_they_are_about(parse):
     _, findings = parse("문단이다.", variant="translated")
     assert [finding.document for finding in findings] == ["translated"]
+
+
+def test_every_finding_names_the_document_it_is_about(parse):
+    text = "문단이다.\n[PAGE 2]\n## 3. 제조\n### 4.1 조회\n[PAGE 1]"
+    for variant in ("source", "translated"):
+        _, findings = parse(text, variant=variant)
+        assert _codes(findings) == [
+            "CONTENT_BEFORE_FIRST_PAGE",
+            "HEADING_NUMBER_MISMATCH",
+            "PAGE_NUMBER_NOT_INCREASING",
+        ]
+        assert {finding.document for finding in findings} == {variant}
+
+
+def test_a_mismatched_heading_still_opens_its_section(parse):
+    elements, findings = parse("[PAGE 1]\n## 3. 제조\n### 4.1 조회\n문단이다.")
+    assert _codes(findings) == ["HEADING_NUMBER_MISMATCH"]
+    assert elements[2].number == "4.1"  # kept as written: nothing is corrected
+    assert elements[2].locator.section_path == ("3", "4.1")
+    assert elements[3].locator.section_path == ("3", "4.1")
+
+
+def test_a_heading_under_a_parent_without_a_number_is_not_compared(parse):
+    _, findings = parse("[PAGE 1]\n## 3. 제조\n### 보관\n#### 9.1 기간")
+    assert findings == ()
+
+
+def test_a_page_number_is_compared_with_the_marker_before_it_only(parse):
+    _, findings = parse("[PAGE 3]\n가.\n[PAGE 1]\n나.\n[PAGE 2]\n다.")
+    assert _codes(findings) == ["PAGE_NUMBER_NOT_INCREASING"]
+    assert findings[0].element_ids == ("e0003",)
 ```
 
 - [ ] **Step 2: 테스트가 실패하는지 확인한다**
@@ -1859,7 +1964,10 @@ FAILED tests/parsing/test_parser_page_heading_findings.py::test_page_numbers_mus
 FAILED tests/parsing/test_parser_page_heading_findings.py::test_a_heading_number_that_does_not_continue_its_parent
 FAILED tests/parsing/test_parser_page_heading_findings.py::test_a_number_that_only_starts_with_the_same_digits_is_a_mismatch
 FAILED tests/parsing/test_parser_page_heading_findings.py::test_findings_name_the_document_they_are_about
-6 failed, 3 passed
+FAILED tests/parsing/test_parser_page_heading_findings.py::test_every_finding_names_the_document_it_is_about
+FAILED tests/parsing/test_parser_page_heading_findings.py::test_a_mismatched_heading_still_opens_its_section
+FAILED tests/parsing/test_parser_page_heading_findings.py::test_a_page_number_is_compared_with_the_marker_before_it_only
+9 failed, 4 passed
 ```
 
 - [ ] **Step 3: 파서를 고친다**
@@ -1903,9 +2011,9 @@ _HEADING_RE = re.compile(r"(#{1,6}) +(\S.*)")
 _HEADING_NUMBER_RE = re.compile(r"([0-9]+(?:\.[0-9]+)*)\.?\s+(\S.*)")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
-# characters that show nothing of their own: control and format characters, combining
-# marks, and letters that are drawn blank
-_HIDING_CATEGORIES = ("Cc", "Cf", "Mn", "Me")
+# characters that show nothing of their own: control and format characters, code points
+# with no character assigned, combining marks, and letters that are drawn blank
+_HIDING_CATEGORIES = ("Cc", "Cf", "Cn", "Mn", "Me")
 _BLANK_LETTERS = frozenset(
     "\N{HANGUL CHOSEONG FILLER}\N{HANGUL JUNGSEONG FILLER}\N{HANGUL FILLER}"
     "\N{HALFWIDTH HANGUL FILLER}\N{BRAILLE PATTERN BLANK}"
@@ -1919,7 +2027,7 @@ def clean_text(value: str) -> str:
 
 def _hides(char: str) -> bool:
     """True for a character that shows nothing of its own and so can hide a marker."""
-    if char.isspace():
+    if char == "\t":
         return False
     return unicodedata.category(char) in _HIDING_CATEGORIES or char in _BLANK_LETTERS
 
@@ -1939,9 +2047,16 @@ def _split_heading(rest: str) -> tuple[Optional[str], str]:
 
 
 def _reads_plainly(rest: str) -> bool:
-    """False when a hiding character opens the heading or changes the number read from it."""
-    seen = "".join(char for char in rest if not _hides(char))
-    return not _hides(rest[0]) and _split_heading(rest)[0] == _split_heading(seen)[0]
+    """False when a hiding character opens the heading or keeps its number from being read.
+
+    The number read from the heading must be the number that is left once the hiding
+    characters and every '*' are taken out.
+    """
+    shown = "".join(char for char in rest if not (_hides(char) or char == "*")).strip()
+    opening = rest.lstrip("* \t")[:1]
+    if any(map(_hides, opening)):
+        return False
+    return _split_heading(rest)[0] == _split_heading(shown)[0]
 
 
 class _Builder:
@@ -2067,9 +2182,9 @@ def parse_lines(
         if not stripped:
             continue
 
-        # a line that starts with a hiding character is not interpreted:
-        # the character would hide a marker from every rule below
-        if _hides(stripped[0]):
+        # a line that starts with a hiding character, or that holds a character other
+        # tools end a line at, is not interpreted: a marker could be hidden in it
+        if _hides(stripped[0]) or len(stripped.splitlines()) > 1:
             builder.unclassified(stripped, line_no, raw)
             continue
 
@@ -2104,7 +2219,7 @@ def parse_lines(
 
 Run: `.venv/Scripts/python -m pytest tests/parsing/test_parser_page_heading_findings.py -q`
 
-Expected: 마지막 줄이 `9 passed`
+Expected: 마지막 줄이 `13 passed`
 
 - [ ] **Step 5: 전체 검사를 돌린다**
 
@@ -2114,7 +2229,7 @@ Expected: 마지막 줄이 `9 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `179 passed`, `All checks passed!`, `13 files already formatted`
+Expected: 차례로 `240 passed`, `All checks passed!`, `13 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -2326,9 +2441,9 @@ _SEPARATOR_CELL_RE = re.compile(r":?-+:?")
 _CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
-# characters that show nothing of their own: control and format characters, combining
-# marks, and letters that are drawn blank
-_HIDING_CATEGORIES = ("Cc", "Cf", "Mn", "Me")
+# characters that show nothing of their own: control and format characters, code points
+# with no character assigned, combining marks, and letters that are drawn blank
+_HIDING_CATEGORIES = ("Cc", "Cf", "Cn", "Mn", "Me")
 _BLANK_LETTERS = frozenset(
     "\N{HANGUL CHOSEONG FILLER}\N{HANGUL JUNGSEONG FILLER}\N{HANGUL FILLER}"
     "\N{HALFWIDTH HANGUL FILLER}\N{BRAILLE PATTERN BLANK}"
@@ -2342,7 +2457,7 @@ def clean_text(value: str) -> str:
 
 def _hides(char: str) -> bool:
     """True for a character that shows nothing of its own and so can hide a marker."""
-    if char.isspace():
+    if char == "\t":
         return False
     return unicodedata.category(char) in _HIDING_CATEGORIES or char in _BLANK_LETTERS
 
@@ -2362,9 +2477,16 @@ def _split_heading(rest: str) -> tuple[Optional[str], str]:
 
 
 def _reads_plainly(rest: str) -> bool:
-    """False when a hiding character opens the heading or changes the number read from it."""
-    seen = "".join(char for char in rest if not _hides(char))
-    return not _hides(rest[0]) and _split_heading(rest)[0] == _split_heading(seen)[0]
+    """False when a hiding character opens the heading or keeps its number from being read.
+
+    The number read from the heading must be the number that is left once the hiding
+    characters and every '*' are taken out.
+    """
+    shown = "".join(char for char in rest if not (_hides(char) or char == "*")).strip()
+    opening = rest.lstrip("* \t")[:1]
+    if any(map(_hides, opening)):
+        return False
+    return _split_heading(rest)[0] == _split_heading(shown)[0]
 
 
 def split_table_row(line: str) -> list[str]:
@@ -2532,9 +2654,9 @@ def parse_lines(
         if not stripped:
             continue
 
-        # a line that starts with a hiding character is not interpreted:
-        # the character would hide a marker from every rule below
-        if _hides(stripped[0]):
+        # a line that starts with a hiding character, or that holds a character other
+        # tools end a line at, is not interpreted: a marker could be hidden in it
+        if _hides(stripped[0]) or len(stripped.splitlines()) > 1:
             builder.unclassified(stripped, line_no, raw)
             continue
 
@@ -2592,7 +2714,7 @@ Expected: 마지막 줄이 `16 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `195 passed`, `All checks passed!`, `14 files already formatted`
+Expected: 차례로 `256 passed`, `All checks passed!`, `14 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -2821,9 +2943,9 @@ _RULE_LINE_RE = re.compile(r"(?:-{3,}|\*{3,}|_{3,})")
 _HTML_LINE_RE = re.compile(r"</?[A-Za-z][^>]*>")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
-# characters that show nothing of their own: control and format characters, combining
-# marks, and letters that are drawn blank
-_HIDING_CATEGORIES = ("Cc", "Cf", "Mn", "Me")
+# characters that show nothing of their own: control and format characters, code points
+# with no character assigned, combining marks, and letters that are drawn blank
+_HIDING_CATEGORIES = ("Cc", "Cf", "Cn", "Mn", "Me")
 _BLANK_LETTERS = frozenset(
     "\N{HANGUL CHOSEONG FILLER}\N{HANGUL JUNGSEONG FILLER}\N{HANGUL FILLER}"
     "\N{HALFWIDTH HANGUL FILLER}\N{BRAILLE PATTERN BLANK}"
@@ -2837,7 +2959,7 @@ def clean_text(value: str) -> str:
 
 def _hides(char: str) -> bool:
     """True for a character that shows nothing of its own and so can hide a marker."""
-    if char.isspace():
+    if char == "\t":
         return False
     return unicodedata.category(char) in _HIDING_CATEGORIES or char in _BLANK_LETTERS
 
@@ -2857,9 +2979,16 @@ def _split_heading(rest: str) -> tuple[Optional[str], str]:
 
 
 def _reads_plainly(rest: str) -> bool:
-    """False when a hiding character opens the heading or changes the number read from it."""
-    seen = "".join(char for char in rest if not _hides(char))
-    return not _hides(rest[0]) and _split_heading(rest)[0] == _split_heading(seen)[0]
+    """False when a hiding character opens the heading or keeps its number from being read.
+
+    The number read from the heading must be the number that is left once the hiding
+    characters and every '*' are taken out.
+    """
+    shown = "".join(char for char in rest if not (_hides(char) or char == "*")).strip()
+    opening = rest.lstrip("* \t")[:1]
+    if any(map(_hides, opening)):
+        return False
+    return _split_heading(rest)[0] == _split_heading(shown)[0]
 
 
 def split_table_row(line: str) -> list[str]:
@@ -3052,9 +3181,9 @@ def parse_lines(
         if not stripped:
             continue
 
-        # a line that starts with a hiding character is not interpreted:
-        # the character would hide a marker from every rule below
-        if _hides(stripped[0]):
+        # a line that starts with a hiding character, or that holds a character other
+        # tools end a line at, is not interpreted: a marker could be hidden in it
+        if _hides(stripped[0]) or len(stripped.splitlines()) > 1:
             builder.unclassified(stripped, line_no, raw)
             continue
 
@@ -3151,7 +3280,7 @@ Expected: 마지막 줄이 `39 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `234 passed`, `All checks passed!`, `15 files already formatted`
+Expected: 차례로 `295 passed`, `All checks passed!`, `15 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -3348,9 +3477,9 @@ _RULE_LINE_RE = re.compile(r"(?:-{3,}|\*{3,}|_{3,})")
 _HTML_LINE_RE = re.compile(r"</?[A-Za-z][^>]*>")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
-# characters that show nothing of their own: control and format characters, combining
-# marks, and letters that are drawn blank
-_HIDING_CATEGORIES = ("Cc", "Cf", "Mn", "Me")
+# characters that show nothing of their own: control and format characters, code points
+# with no character assigned, combining marks, and letters that are drawn blank
+_HIDING_CATEGORIES = ("Cc", "Cf", "Cn", "Mn", "Me")
 _BLANK_LETTERS = frozenset(
     "\N{HANGUL CHOSEONG FILLER}\N{HANGUL JUNGSEONG FILLER}\N{HANGUL FILLER}"
     "\N{HALFWIDTH HANGUL FILLER}\N{BRAILLE PATTERN BLANK}"
@@ -3368,7 +3497,7 @@ def clean_text(value: str) -> str:
 
 def _hides(char: str) -> bool:
     """True for a character that shows nothing of its own and so can hide a marker."""
-    if char.isspace():
+    if char == "\t":
         return False
     return unicodedata.category(char) in _HIDING_CATEGORIES or char in _BLANK_LETTERS
 
@@ -3388,9 +3517,16 @@ def _split_heading(rest: str) -> tuple[Optional[str], str]:
 
 
 def _reads_plainly(rest: str) -> bool:
-    """False when a hiding character opens the heading or changes the number read from it."""
-    seen = "".join(char for char in rest if not _hides(char))
-    return not _hides(rest[0]) and _split_heading(rest)[0] == _split_heading(seen)[0]
+    """False when a hiding character opens the heading or keeps its number from being read.
+
+    The number read from the heading must be the number that is left once the hiding
+    characters and every '*' are taken out.
+    """
+    shown = "".join(char for char in rest if not (_hides(char) or char == "*")).strip()
+    opening = rest.lstrip("* \t")[:1]
+    if any(map(_hides, opening)):
+        return False
+    return _split_heading(rest)[0] == _split_heading(shown)[0]
 
 
 def split_table_row(line: str) -> list[str]:
@@ -3583,9 +3719,9 @@ def parse_lines(
         if not stripped:
             continue
 
-        # a line that starts with a hiding character is not interpreted:
-        # the character would hide a marker from every rule below
-        if _hides(stripped[0]):
+        # a line that starts with a hiding character, or that holds a character other
+        # tools end a line at, is not interpreted: a marker could be hidden in it
+        if _hides(stripped[0]) or len(stripped.splitlines()) > 1:
             builder.unclassified(stripped, line_no, raw)
             continue
 
@@ -3696,7 +3832,7 @@ Expected: 마지막 줄이 `7 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `241 passed`, `All checks passed!`, `17 files already formatted`
+Expected: 차례로 `302 passed`, `All checks passed!`, `17 files already formatted`
 
 - [ ] **Step 7: 커밋한다**
 
@@ -3851,7 +3987,7 @@ Expected: 마지막 줄이 `11 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `252 passed`, `All checks passed!`, `18 files already formatted`
+Expected: 차례로 `313 passed`, `All checks passed!`, `18 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -4023,7 +4159,7 @@ Expected: 마지막 줄이 `30 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `282 passed`, `All checks passed!`, `20 files already formatted`
+Expected: 차례로 `343 passed`, `All checks passed!`, `20 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -4348,7 +4484,7 @@ Expected: 마지막 줄이 `57 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `339 passed`, `All checks passed!`, `21 files already formatted`
+Expected: 차례로 `400 passed`, `All checks passed!`, `21 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -4717,7 +4853,7 @@ Expected: 마지막 줄이 `15 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `354 passed`, `All checks passed!`, `22 files already formatted`
+Expected: 차례로 `415 passed`, `All checks passed!`, `22 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5321,7 +5457,7 @@ Expected: 마지막 줄이 `22 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `376 passed`, `All checks passed!`, `24 files already formatted`
+Expected: 차례로 `437 passed`, `All checks passed!`, `24 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5540,7 +5676,7 @@ Expected: 마지막 줄이 `24 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `400 passed`, `All checks passed!`, `25 files already formatted`
+Expected: 차례로 `461 passed`, `All checks passed!`, `25 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -5765,7 +5901,7 @@ Expected: 마지막 줄이 `23 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `423 passed`, `All checks passed!`, `27 files already formatted`
+Expected: 차례로 `484 passed`, `All checks passed!`, `27 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6228,7 +6364,7 @@ Expected: 마지막 줄이 `33 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `456 passed`, `All checks passed!`, `29 files already formatted`
+Expected: 차례로 `517 passed`, `All checks passed!`, `29 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6574,7 +6710,7 @@ Expected: 종료 코드 0, 출력은 아래와 같다.
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `474 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `535 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 11: 커밋한다**
 
@@ -6751,7 +6887,7 @@ python -m venv .venv
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `474 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `535 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 5: 설계의 완료 기준을 하나씩 확인한다**
 

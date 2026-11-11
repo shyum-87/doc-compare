@@ -16,6 +16,8 @@ from app.models.document import (
     Locator,
     PageMarker,
     Paragraph,
+    Table,
+    TableCell,
     Unclassified,
     Variant,
     element_id_for,
@@ -25,6 +27,8 @@ from app.models.findings import Finding, FindingCode, new_finding
 _PAGE_RE = re.compile(r"\[PAGE ?([0-9]{1,6})\]")
 _HEADING_RE = re.compile(r"(#{1,6}) +(\S.*)")
 _HEADING_NUMBER_RE = re.compile(r"([0-9]+(?:\.[0-9]+)*)\.?\s+(\S.*)")
+_SEPARATOR_CELL_RE = re.compile(r":?-+:?")
+_CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 # characters that show nothing of their own: control and format characters, code points
@@ -75,6 +79,24 @@ def _reads_plainly(rest: str) -> bool:
     return _split_heading(rest)[0] == _split_heading(shown)[0]
 
 
+def split_table_row(line: str) -> list[str]:
+    """'|a|b| ' -> ['a', 'b']. An escaped pipe (\\|) does not split."""
+    body = line.strip()
+    if body.startswith("|"):
+        body = body[1:]
+    if body.endswith("|") and not body.endswith("\\|"):
+        body = body[:-1]
+    return [clean_text(cell.strip().replace("\\|", "|")) for cell in _CELL_SPLIT_RE.split(body)]
+
+
+def _is_separator_row(line: str) -> bool:
+    body = line.strip()
+    if not body.startswith("|"):
+        return False
+    cells = split_table_row(body)
+    return bool(cells) and all(_SEPARATOR_CELL_RE.fullmatch(cell) for cell in cells)
+
+
 class _Builder:
     def __init__(self, variant: Variant) -> None:
         self.variant: Variant = variant
@@ -84,6 +106,7 @@ class _Builder:
         self.seen_page_marker = False
         self.before_first_page: list[Element] = []
         self.headings: list[tuple[int, str, Optional[str]]] = []  # (level, label, number)
+        self.table_count = 0
 
     def next_id(self) -> str:
         return element_id_for(len(self.elements) + 1)
@@ -101,14 +124,14 @@ class _Builder:
         if not self.seen_page_marker:
             self.before_first_page.append(element)
 
-    def flag(self, code: FindingCode, element: Element) -> None:
+    def flag(self, code: FindingCode, element: Element, line: Optional[int] = None) -> None:
         self.findings.append(
             new_finding(
                 code,
                 self.variant,
                 element_ids=(element.element_id,),
-                line_start=element.locator.line_start,
-                line_end=element.locator.line_end,
+                line_start=line if line is not None else element.locator.line_start,
+                line_end=line if line is not None else element.locator.line_end,
             )
         )
 
@@ -160,6 +183,29 @@ class _Builder:
         self.add(element)
         if mismatch:
             self.flag("HEADING_NUMBER_MISMATCH", element)
+
+    def table(self, block: list[str], line_start: int) -> None:
+        self.table_count += 1
+        header = split_table_row(block[0])
+        rows = [split_table_row(line) for line in block[2:]]
+        element = Table(
+            element_id=self.next_id(),
+            locator=self.locator(line_start, line_start + len(block) - 1),
+            raw="\n".join(block),
+            text="\n".join(" | ".join(cells) for cells in [header, *rows]),
+            table_index=self.table_count,
+            header=tuple(header),
+            rows=tuple(
+                tuple(TableCell(row=r, col=c, text=text) for c, text in enumerate(cells, start=1))
+                for r, cells in enumerate(rows, start=1)
+            ),
+        )
+        self.add(element)
+        if len(split_table_row(block[1])) != len(header):
+            self.flag("TABLE_ROW_WIDTH_MISMATCH", element, line_start + 1)
+        for offset, cells in enumerate(rows, start=2):
+            if len(cells) != len(header):
+                self.flag("TABLE_ROW_WIDTH_MISMATCH", element, line_start + offset)
 
     def paragraph(self, stripped: str, line_no: int, raw: str) -> None:
         self.add(
@@ -221,6 +267,19 @@ def parse_lines(
                 builder.heading(len(match.group(1)), match.group(2), line_no, raw)
             else:
                 builder.unclassified(stripped, line_no, raw)
+            continue
+
+        # 4. table: consecutive pipe lines whose second line is a separator row
+        if stripped.startswith("|"):
+            block = [raw]
+            while index < len(lines) and lines[index].strip().startswith("|"):
+                block.append(lines[index])
+                index += 1
+            if len(block) >= 2 and _is_separator_row(block[1]):
+                builder.table(block, line_no)
+            else:
+                for offset, block_line in enumerate(block):
+                    builder.unclassified(block_line.strip(), line_no + offset, block_line)
             continue
 
         # 7. paragraph: one line is one paragraph

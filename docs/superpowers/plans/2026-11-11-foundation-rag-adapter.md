@@ -113,6 +113,8 @@
 
 - `blocked_element_ids(문서, 발견 항목)`는 그 문서에서 막힌 요소 ID를 돌려준다. 범위가 문서인 코드는 모든 요소를 막는다. 그 밖에는 발견 항목이 가리키는 문서에서는 `element_ids`를, 상대 문서에서는 `counterpart_element_ids`를 막는다. 등급이 "참고"인 것은 아무것도 막지 않는다.
 - `ingest()`에 원문 언어 `ko`와 원문 파일을 함께 주면 `ValueError`를 낸다. 호출하는 쪽의 잘못이기 때문이다. 명령줄은 `ingest()`를 부르기 전에 사용법 오류(종료 코드 2)로 처리한다.
+- 명령줄은 `--out`이 주 파일이나 `--source`와 같은 파일이면 `ingest()`를 부르기 전에 사용법 오류(종료 코드 2)로 처리한다. 결과가 읽고 있는 문서를 덮어쓰지 않게 한다. 같은 파일인지는 운영체제에 묻고(`Path.samefile`), 경로가 없어서 물을 수 없으면 절대 경로로 바꾼 표기를 비교한다.
+- 명령줄은 결과 파일을 쓰지 못했거나 예상하지 못한 오류가 나면 종료 코드 2로 끝난다. 종료 코드 0과 1은 결과 파일을 쓴 뒤에만 나온다. 이때 로그에는 예외의 종류만 쓴다.
 - 로그는 `status:` 줄 다음에 `findings:` 줄을 쓴다. 내부 오류는 예외의 종류와 코드 위치만 쓴다. 예외 메시지는 문서 본문을 인용할 수 있으므로 쓰지 않는다.
 
 ## 구현 전에 알아 둘 열린 문제
@@ -7715,7 +7717,7 @@ git push -u origin main
 
 ### Task 18: 명령줄
 
-설계 §8. `python -m app.parsing`으로 실행하고 결과를 JSON 파일로 쓴다. 종료 코드는 `OK` 0, `REVIEW_REQUIRED` 1, `FAILED`와 사용법 오류 2다.
+설계 §8. `python -m app.parsing`으로 실행하고 결과를 JSON 파일로 쓴다. 종료 코드는 `OK` 0, `REVIEW_REQUIRED` 1, `FAILED`와 사용법 오류 2다. 결과 파일을 쓰지 못했거나 예상하지 못한 오류가 나도 2다. `--out`이 주 파일이나 `--source`와 같은 파일이면 사용법 오류다.
 
 **Files:**
 - Create: `app/parsing/__main__.py`
@@ -7734,14 +7736,24 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
-from app.models.findings import IngestResult
-from app.parsing.__main__ import main
+from app.models.document import Language
+from app.models.findings import IngestResult, Status
+from app.parsing.__main__ import EXIT_CODES, build_parser, main
 from app.parsing.ingest import ingest
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# what ingest logs for the Korean sample read as a translation, with its source
+RUN_LOG = [
+    ("app.parsing.ingest", "INFO", "read the translated file: 114 lines, 49 elements"),
+    ("app.parsing.ingest", "INFO", "read the source file: 114 lines, 49 elements"),
+    ("app.parsing.ingest", "INFO", "status: OK"),
+    ("app.parsing.ingest", "INFO", "findings: IMAGE_PRESENT=6"),
+]
 
 
 def _args(main_file, out, language="ko", source=None):
@@ -7763,6 +7775,16 @@ def _args(main_file, out, language="ko", source=None):
 
 def _read(out):
     return IngestResult.model_validate_json(out.read_text(encoding="utf-8"))
+
+
+def _records(caplog):
+    return [(record.name, record.levelname, record.getMessage()) for record in caplog.records]
+
+
+def _usage_error(args):
+    with pytest.raises(SystemExit) as exit_info:
+        main(args)
+    return exit_info.value.code
 
 
 def test_ok_exits_with_0(tmp_path, ko_sample):
@@ -7800,6 +7822,10 @@ def test_failed_exits_with_2_and_still_writes_the_result(tmp_path):
     assert result.documents == ()
 
 
+def test_every_status_has_an_exit_code():
+    assert set(EXIT_CODES) == set(get_args(Status))
+
+
 def test_the_result_file_reads_back_as_the_same_result(tmp_path, ko_sample, source_samples):
     out = tmp_path / "result.json"
     main(_args(ko_sample, out, "zh", source_samples["zh"]))
@@ -7827,15 +7853,131 @@ def test_the_output_directory_is_created(tmp_path, ko_sample):
     assert out.is_file()
 
 
-def test_a_result_file_that_cannot_be_written_exits_with_2(tmp_path, ko_sample):
-    assert main(_args(ko_sample, tmp_path)) == 2  # --out is a directory
+def test_an_older_result_file_is_replaced(tmp_path, ko_sample):
+    out = tmp_path / "result.json"
+    out.write_text("an older result", encoding="utf-8")
+    assert main(_args(ko_sample, out)) == 0
+    assert _read(out).status == "OK"
+
+
+def test_a_result_file_that_cannot_be_written_exits_with_2(tmp_path, caplog, ko_sample):
+    with caplog.at_level(logging.DEBUG):
+        assert main(_args(ko_sample, tmp_path)) == 2  # --out is a directory
+    name, level, message = _records(caplog)[-1]
+    assert (name, level) == ("app.parsing", "ERROR")
+    assert message in (
+        "cannot write the result file: PermissionError",  # Windows
+        "cannot write the result file: IsADirectoryError",
+    )
+
+
+def test_an_output_directory_that_cannot_be_made_exits_with_2(tmp_path, caplog, ko_sample):
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file where the directory should be", encoding="utf-8")
+    with caplog.at_level(logging.DEBUG):
+        assert main(_args(ko_sample, blocker / "result.json")) == 2
+    assert _records(caplog)[-1] == (
+        "app.parsing",
+        "ERROR",
+        "cannot write the result file: FileExistsError",
+    )
+    assert blocker.read_text(encoding="utf-8") == "a file where the directory should be"
+
+
+@pytest.mark.parametrize("error", [OSError, RuntimeError, ValueError])
+def test_any_error_while_writing_exits_with_2_and_logs_its_type_only(
+    tmp_path, caplog, monkeypatch, ko_sample, source_samples, error
+):
+    def explode(self, data):
+        raise error(f"비밀 문장 {self}")
+
+    monkeypatch.setattr(Path, "write_bytes", explode)
+    out = tmp_path / "result.json"
+    with caplog.at_level(logging.DEBUG):
+        assert main(_args(ko_sample, out, "en", source_samples["en"])) == 2
+    assert _records(caplog) == [
+        *RUN_LOG,
+        ("app.parsing", "ERROR", f"cannot write the result file: {error.__name__}"),
+    ]
+    assert "비밀 문장" not in caplog.text  # no message and no traceback of the error
+    assert not out.exists()
+
+
+def test_an_unexpected_error_exits_with_2_and_logs_its_type_only(
+    tmp_path, caplog, monkeypatch, ko_sample
+):
+    def explode(*args, **kwargs):
+        raise RuntimeError("비밀 문장")
+
+    monkeypatch.setattr("app.parsing.__main__.ingest", explode)
+    out = tmp_path / "result.json"
+    with caplog.at_level(logging.DEBUG):
+        assert main(_args(ko_sample, out)) == 2  # not 1: no result file says what to review
+    assert _records(caplog) == [("app.parsing", "ERROR", "internal error: RuntimeError")]
+    assert "비밀 문장" not in caplog.text
+    assert not out.exists()
+
+
+def test_a_result_that_cannot_be_turned_into_json_exits_with_2(tmp_path, caplog, ko_sample):
+    args = _args(ko_sample, tmp_path / "result.json")
+    args[args.index("--doc-id") + 1] = "SOP-" + chr(0xD800)  # half a surrogate pair: not UTF-8
+    with caplog.at_level(logging.DEBUG):
+        assert main(args) == 2
+    name, level, message = _records(caplog)[-1]
+    assert (name, level) == ("app.parsing", "ERROR")
+    assert message.startswith("internal error: ")
+    assert not (tmp_path / "result.json").exists()
+
+
+def test_an_interrupt_is_not_turned_into_an_exit_code(tmp_path, monkeypatch, ko_sample):
+    def interrupt(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("app.parsing.__main__.ingest", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        main(_args(ko_sample, tmp_path / "result.json"))
 
 
 def test_source_with_a_korean_original_is_a_usage_error(tmp_path, ko_sample, source_samples):
     out = tmp_path / "result.json"
-    with pytest.raises(SystemExit) as exit_info:
-        main(_args(ko_sample, out, "ko", source_samples["en"]))
-    assert exit_info.value.code == 2
+    assert _usage_error(_args(ko_sample, out, "ko", source_samples["en"])) == 2
+    assert not out.exists()
+
+
+def _copy(path, directory):
+    copy = directory / path.name
+    copy.write_bytes(path.read_bytes())
+    return copy
+
+
+def test_out_naming_the_main_file_is_a_usage_error(tmp_path, ko_sample):
+    main_file = _copy(ko_sample, tmp_path)
+    (tmp_path / "sub").mkdir()
+    for out in (main_file, tmp_path / "sub" / ".." / main_file.name):
+        assert _usage_error(_args(main_file, out)) == 2
+        assert main_file.read_bytes() == ko_sample.read_bytes()  # the document is still there
+
+
+def test_out_naming_the_source_file_is_a_usage_error(tmp_path, ko_sample, source_samples):
+    main_file = _copy(ko_sample, tmp_path)
+    source = _copy(source_samples["vi"], tmp_path)
+    assert _usage_error(_args(main_file, source, "vi", source)) == 2
+    assert main_file.read_bytes() == ko_sample.read_bytes()
+    assert source.read_bytes() == source_samples["vi"].read_bytes()
+
+
+def test_out_naming_a_missing_main_file_is_a_usage_error(tmp_path):
+    missing = tmp_path / "missing.md"
+    for out in (missing, tmp_path / "sub" / ".." / "missing.md"):
+        assert _usage_error(_args(missing, out)) == 2
+        assert not missing.exists()  # no result is written where the document was expected
+
+
+def test_out_is_compared_as_a_file_and_not_as_a_spelling(tmp_path, monkeypatch, ko_sample):
+    # a hard link or a short name of the main file: only the operating system can tell
+    monkeypatch.setattr(Path, "samefile", lambda self, other: True)
+    out = tmp_path / "result.json"
+    assert _usage_error(_args(ko_sample, out)) == 2
     assert not out.exists()
 
 
@@ -7847,15 +7989,26 @@ def test_a_missing_option_is_a_usage_error(tmp_path, ko_sample, drop):
     args = _args(ko_sample, tmp_path / "result.json")
     index = args.index(drop)
     del args[index : index + 2]
-    with pytest.raises(SystemExit) as exit_info:
-        main(args)
-    assert exit_info.value.code == 2
+    assert _usage_error(args) == 2
 
 
 def test_an_unknown_language_is_a_usage_error(tmp_path, ko_sample):
-    with pytest.raises(SystemExit) as exit_info:
-        main(_args(ko_sample, tmp_path / "result.json", "ja"))
-    assert exit_info.value.code == 2
+    assert _usage_error(_args(ko_sample, tmp_path / "result.json", "ja")) == 2
+
+
+def test_the_languages_are_those_of_the_document_model(tmp_path, ko_sample):
+    assert "{" + ",".join(get_args(Language)) + "}" in build_parser().format_usage()  # no other
+    for language in get_args(Language):
+        args = build_parser().parse_args(_args(ko_sample, tmp_path / "result.json", language))
+        assert args.original_language == language
+
+
+def test_the_log_of_a_run_holds_counts_and_codes_only(tmp_path, caplog, ko_sample, source_samples):
+    out = tmp_path / "result.json"
+    with caplog.at_level(logging.DEBUG):
+        assert main(_args(ko_sample, out, "en", source_samples["en"])) == 0
+    # the whole log: a line with a path, a document ID or text of a document would show here
+    assert _records(caplog) == RUN_LOG
 
 
 def test_logs_carry_no_document_text(tmp_path, caplog, ko_sample, source_samples):
@@ -7905,17 +8058,20 @@ E   ModuleNotFoundError: No module named 'app.parsing.__main__'
 ```python
 """Command line: python -m app.parsing <main file> --doc-id ... --out result.json
 
-Exit codes: 0 = OK, 1 = REVIEW_REQUIRED, 2 = FAILED or a usage error.
+Exit codes: 0 = OK, 1 = REVIEW_REQUIRED, 2 = FAILED, a usage error, or no result file.
+Codes 0 and 1 come out only after the result file is written.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Optional, Sequence, get_args
 
+from app.models.document import Language
 from app.parsing.ingest import ingest
 
 EXIT_CODES = {"OK": 0, "REVIEW_REQUIRED": 1, "FAILED": 2}
@@ -7931,10 +8087,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("main_file", type=Path, help="rag_ko.md, or a Korean baseline document")
     parser.add_argument("--doc-id", required=True)
     parser.add_argument("--version", required=True)
-    parser.add_argument("--original-language", required=True, choices=["ko", "vi", "en", "zh"])
+    parser.add_argument("--original-language", required=True, choices=list(get_args(Language)))
     parser.add_argument("--source", type=Path, default=None, help="rag.md before translation")
     parser.add_argument("--out", type=Path, required=True, help="result JSON (keep under out/)")
     return parser
+
+
+def _same_file(first: Path, second: Path) -> bool:
+    """Whether two paths name one file. A path that does not exist is compared as written."""
+    try:
+        return first.samefile(second)
+    except (OSError, ValueError):
+        return _spelling(first) == _spelling(second)
+
+
+def _spelling(path: Path) -> str:
+    return os.path.normcase(os.path.abspath(path))
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -7942,25 +8110,37 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parser.parse_args(argv)
     if args.original_language == "ko" and args.source is not None:
         parser.error("--source cannot be used with --original-language ko")  # exits with 2
+    inputs = [args.main_file] if args.source is None else [args.main_file, args.source]
+    if any(_same_file(args.out, path) for path in inputs):
+        # the result would replace the document that is being read
+        parser.error("--out cannot be the main file or the source file")  # exits with 2
 
     logging.basicConfig(
         level=logging.INFO, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s"
     )
-    result = ingest(
-        args.main_file,
-        doc_id=args.doc_id,
-        version=args.version,
-        original_language=args.original_language,
-        source_path=args.source,
-    )
+    # Nothing but 0, 1 or 2 leaves this function, and a log line names the type of an error
+    # only: its message can hold a path, a document ID or text of the document.
+    try:
+        result = ingest(
+            args.main_file,
+            doc_id=args.doc_id,
+            version=args.version,
+            original_language=args.original_language,
+            source_path=args.source,
+        )
+        # as bytes, so the file is UTF-8 with LF line ends on every platform
+        data = result.model_dump_json(indent=2).encode("utf-8")
+        exit_code = EXIT_CODES[result.status]
+    except Exception as error:
+        logger.error("internal error: %s", type(error).__name__)
+        return 2
     try:
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        # written as bytes so the file is UTF-8 with LF line ends on every platform
-        args.out.write_bytes(result.model_dump_json(indent=2).encode("utf-8"))
-    except OSError as error:
+        args.out.write_bytes(data)
+    except Exception as error:
         logger.error("cannot write the result file: %s", type(error).__name__)
         return 2
-    return EXIT_CODES[result.status]
+    return exit_code
 
 
 if __name__ == "__main__":
@@ -7973,7 +8153,7 @@ if __name__ == "__main__":
 
 Run: `.venv/Scripts/python -m pytest tests/parsing/test_cli.py -q`
 
-Expected: 마지막 줄이 `18 passed`
+Expected: 마지막 줄이 `33 passed`
 
 - [ ] **Step 5: 한국어 기준 문서로 실행해 본다**
 
@@ -8047,7 +8227,7 @@ Expected: 종료 코드 0, 출력은 아래와 같다.
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `931 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `946 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 11: 커밋한다**
 
@@ -8128,7 +8308,7 @@ INFO app.parsing.ingest: status: OK
 INFO app.parsing.ingest: findings: IMAGE_PRESENT=6
 ```
 
-종료 코드는 `OK` 0, `REVIEW_REQUIRED` 1, `FAILED` 2다. 결과 JSON은 `out/` 아래에 두고 사내에서만 연다.
+종료 코드는 `OK` 0, `REVIEW_REQUIRED` 1, `FAILED` 2다. 사용법 오류이거나 결과 파일을 쓰지 못했을 때도 2다. `--out`에 입력 파일을 주면 사용법 오류다. 결과 JSON은 `out/` 아래에 두고 사내에서만 연다.
 
 ## 4. 가지고 나올 것
 
@@ -8207,7 +8387,7 @@ python -m venv .venv
 .venv/Scripts/python -m app.parsing tests/fixtures/rag_ko/sample_bakery_sop.md --doc-id SOP-SAMPLE --version 1 --original-language vi --source tests/fixtures/rag/sample_bakery_sop.vi.md --out out/sample.json
 ```
 
-- 명령줄 종료 코드는 `OK` 0, `REVIEW_REQUIRED` 1, `FAILED`와 사용법 오류 2다.
+- 명령줄 종료 코드는 `OK` 0, `REVIEW_REQUIRED` 1, `FAILED`와 사용법 오류 2다. 결과 파일을 쓰지 못했거나 예상하지 못한 오류가 나도 2다. 0과 1은 결과 파일을 쓴 뒤에만 나온다.
 - 결과 JSON에는 문서 본문이 들어간다. `out/` 아래에만 쓰고 커밋하지 않는다.
 - 파싱 규칙이나 토큰 규칙을 바꾸면 `app/parsing/ingest.py`의 `PARSER_VERSION`을 올린다.
 - `tests/fixtures/`의 샘플과 테스트의 기준값은 고치지 않는다. 테스트가 실패하면 코드를 고친다.
@@ -8224,7 +8404,7 @@ python -m venv .venv
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `931 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `946 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 5: 설계의 완료 기준을 하나씩 확인한다**
 
@@ -8239,7 +8419,7 @@ Expected: 차례로 `931 passed`, `All checks passed!`, `31 files already format
 
 Run: `.venv/Scripts/python -m pytest tests/parsing/test_sample_golden.py tests/parsing/test_line_coverage.py tests/parsing/test_translation_mutations.py tests/parsing/test_ingest.py tests/parsing/test_cli.py -q`
 
-Expected: 마지막 줄이 `104 passed`
+Expected: 마지막 줄이 `119 passed`
 
 - [ ] **Step 6: 커밋한다**
 

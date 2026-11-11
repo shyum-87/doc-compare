@@ -3725,6 +3725,13 @@ def test_parsed_lines_are_covered():
     verify_line_coverage(LINES, elements)  # does not raise
 
 
+def test_a_line_of_spaces_is_blank_and_a_line_of_hidden_characters_is_not():
+    lines = ("가", " \t", "\N{IDEOGRAPHIC SPACE}", "\x1c", "\N{ZERO WIDTH SPACE}", "나")
+    elements, _ = parse_lines(lines, "source")
+    verify_line_coverage(lines, elements)  # does not raise
+    assert [element.locator.line_start for element in elements] == [1, 5, 6]
+
+
 def test_a_lost_element_is_noticed():
     elements, _ = parse_lines(LINES, "source")
     with pytest.raises(LineCoverageError, match="line 4 is owned by 0 elements"):
@@ -3753,16 +3760,31 @@ def test_an_element_outside_the_file_is_noticed():
         verify_line_coverage(LINES[:-1], elements)
 
 
+def test_an_element_before_the_first_line_is_noticed():
+    elements, _ = parse_lines(LINES, "source")
+    marker = elements[0]
+    moved = marker.model_copy(
+        update={"locator": marker.locator.model_copy(update={"line_start": 0})}
+    )
+    with pytest.raises(LineCoverageError, match="e0001 points outside the file"):
+        verify_line_coverage(LINES, (moved,) + elements[1:])
+
+
 def test_the_message_holds_no_document_text():
     elements, _ = parse_lines(LINES, "source")
-    with pytest.raises(LineCoverageError) as caught:
+    with pytest.raises(LineCoverageError) as lost:
         verify_line_coverage(LINES, elements[:2] + elements[3:])
-    assert "문단" not in str(caught.value)
+    assert str(lost.value) == "line 4 is owned by 0 elements"
+    with pytest.raises(LineCoverageError) as outside:
+        verify_line_coverage(LINES[:-1], elements)
+    assert str(outside.value) == "e0006 points outside the file"
 
 
 def test_every_sample_is_covered(ko_sample, source_samples):
     for path in [ko_sample, *source_samples.values()]:
-        lines = read_lines(path).lines
+        result = read_lines(path)
+        assert result.error is None
+        lines = result.lines
         elements, _ = parse_lines(lines, "source")
         verify_line_coverage(lines, elements)
         owned = {
@@ -4235,7 +4257,7 @@ def verify_line_coverage(lines: tuple[str, ...], elements: tuple[Element, ...]) 
 
 Run: `.venv/Scripts/python -m pytest tests/parsing/test_line_coverage.py -q`
 
-Expected: 마지막 줄이 `7 passed`
+Expected: 마지막 줄이 `9 passed`
 
 - [ ] **Step 6: 전체 검사를 돌린다**
 
@@ -4245,7 +4267,7 @@ Expected: 마지막 줄이 `7 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `402 passed`, `All checks passed!`, `17 files already formatted`
+Expected: 차례로 `404 passed`, `All checks passed!`, `17 files already formatted`
 
 - [ ] **Step 7: 커밋한다**
 
@@ -4400,7 +4422,7 @@ Expected: 마지막 줄이 `11 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `413 passed`, `All checks passed!`, `18 files already formatted`
+Expected: 차례로 `415 passed`, `All checks passed!`, `18 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -4572,7 +4594,7 @@ Expected: 마지막 줄이 `30 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `443 passed`, `All checks passed!`, `20 files already formatted`
+Expected: 차례로 `445 passed`, `All checks passed!`, `20 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -4897,7 +4919,7 @@ Expected: 마지막 줄이 `57 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `500 passed`, `All checks passed!`, `21 files already formatted`
+Expected: 차례로 `502 passed`, `All checks passed!`, `21 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5266,7 +5288,7 @@ Expected: 마지막 줄이 `15 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `515 passed`, `All checks passed!`, `22 files already formatted`
+Expected: 차례로 `517 passed`, `All checks passed!`, `22 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5870,7 +5892,7 @@ Expected: 마지막 줄이 `22 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `537 passed`, `All checks passed!`, `24 files already formatted`
+Expected: 차례로 `539 passed`, `All checks passed!`, `24 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6089,7 +6111,7 @@ Expected: 마지막 줄이 `24 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `561 passed`, `All checks passed!`, `25 files already formatted`
+Expected: 차례로 `563 passed`, `All checks passed!`, `25 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -6314,7 +6336,7 @@ Expected: 마지막 줄이 `23 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `584 passed`, `All checks passed!`, `27 files already formatted`
+Expected: 차례로 `586 passed`, `All checks passed!`, `27 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6777,7 +6799,7 @@ Expected: 마지막 줄이 `33 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `617 passed`, `All checks passed!`, `29 files already formatted`
+Expected: 차례로 `619 passed`, `All checks passed!`, `29 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -7123,7 +7145,7 @@ Expected: 종료 코드 0, 출력은 아래와 같다.
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `635 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `637 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 11: 커밋한다**
 
@@ -7300,7 +7322,7 @@ python -m venv .venv
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `635 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `637 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 5: 설계의 완료 기준을 하나씩 확인한다**
 

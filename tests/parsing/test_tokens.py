@@ -36,9 +36,16 @@ def _others(text, language="ko"):
         ("10³", "10^3"),
         ("10⁹", "10^9"),
         ("10⁻³", "10^-3"),
-        ("10⁺²³", "10^+23"),  # one mark for the whole run
-        ("x⁰¹²³⁴⁵⁶⁷⁸⁹", "x^0123456789"),
-        ("5 m² 와 3 m³", "5 m^2 와 3 m^3"),
+        ("10⁺²³", "10^+23"),  # one mark, before the first
+        ("１０³", "10^3"),  # after a full-width digit too
+        ("BK01²", "BK01^2"),
+        ("x²", "x2"),  # not right after a digit: no mark
+        ("5 m² 와 3 m³", "5 m2 와 3 m3"),
+        ("kg/cm²", "kg/cm2"),
+        ("Ca²⁺", "Ca2+"),
+        ("10 ³", "10 3"),
+        ("²", "2"),
+        ("SO₄²⁻", "SO42-"),  # a subscript is not a digit here
         ("H₂O", "H2O"),  # a subscript is not marked
         ("5㎖", "5ml"),
         ("5ℓ", "5l"),
@@ -46,6 +53,20 @@ def _others(text, language="ko"):
 )
 def test_normalize(text, expected):
     assert normalize(text) == expected
+
+
+@pytest.mark.parametrize(
+    "superscript, plain", list(zip("⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻", "0123456789+-", strict=True))
+)
+def test_every_superscript_right_after_a_digit_is_marked(superscript, plain):
+    assert normalize("1" + superscript) == "1^" + plain
+
+
+@pytest.mark.parametrize(
+    "digit, plain", list(zip("0123456789０１２３４５６７８９", "0123456789" * 2, strict=True))
+)
+def test_a_superscript_is_marked_after_every_digit(digit, plain):
+    assert normalize(digit + "³") == plain + "^3"
 
 
 def test_numbers_are_found_with_their_value():
@@ -111,6 +132,34 @@ def test_a_superscript_sign_and_a_unit_before_a_superscript_are_kept():
 @pytest.mark.parametrize(
     "text, numbers, others",
     [
+        ("5 kg/cm²", ["5"], ["unit:kg", "code:cm2"]),
+        ("5 kg/m²", ["5"], ["unit:kg", "code:m2"]),
+        ("조도 (W/m²)", [], ["code:m2"]),
+        ("Ca²⁺ 5 mg", ["5"], ["code:Ca2", "unit:mg"]),
+        ("BK01² 참조", ["2"], ["code:BK01"]),  # after a digit: a number of its own
+    ],
+)
+def test_a_superscript_after_a_letter_stays_with_the_letters(text, numbers, others):
+    assert _numbers(text) == numbers
+    assert _others(text) == others
+
+
+@pytest.mark.parametrize(
+    "with_superscript, plain",
+    [
+        ("100 kg/m²", "100 kg/m2"),
+        ("면적(m²)", "면적(m2)"),
+        ("Ca²⁺ 5 mg", "Ca2+ 5 mg"),
+        ("5 m²", "5 m2"),
+    ],
+)
+def test_a_superscript_after_a_letter_reads_like_the_plain_character(with_superscript, plain):
+    assert extract_tokens(with_superscript, "ko") == extract_tokens(plain, "ko")
+
+
+@pytest.mark.parametrize(
+    "text, numbers, others",
+    [
         (".5 kg", [(".5", None)], ["unit:kg"]),
         ("-.5 kg", [(".5", None)], ["sym:neg", "unit:kg"]),
         ("약 .25 mL", [(".25", None)], ["unit:mL"]),
@@ -132,6 +181,13 @@ def test_a_point_that_leads_a_number_stays_with_it(text, numbers, others):
     tokens = extract_tokens(text, "ko")
     assert [(token.raw, token.value) for token in tokens.numbers] == numbers
     assert list(tokens.others) == others
+
+
+def test_the_unit_table():
+    assert UNITS == (
+        "℃", "°C", "℉", "%", "\N{GREEK SMALL LETTER MU}m", "mm", "cm", "m", "mg", "g", "kg",
+        "mL", "L", "Pa", "kPa", "MPa", "rpm", "ppm",
+    )  # fmt: skip
 
 
 @pytest.mark.parametrize("unit", UNITS)
@@ -164,6 +220,7 @@ def test_another_spelling_gives_the_unit_of_the_table():
         ("5 Liter", []),
         ("5 mmol", []),
         ("5 kgf", []),
+        ("5 mA", []),  # a capital letter starts a word too
         ("5 mẻ", []),  # a letter with a tone mark is a letter
         ("5 gói", []),
         ("5 lần", []),
@@ -186,6 +243,30 @@ def test_scanning_goes_on_after_the_unit():
     tokens = extract_tokens("5m2", "ko")
     assert [token.raw for token in tokens.numbers] == ["5", "2"]
     assert tokens.others == ("unit:m",)
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Tank A-5 kg", ["code:A-5", "unit:kg"]),
+        ("Tank A\N{EN DASH}5 g", ["code:A-5", "unit:g"]),
+        ("T-18℃이하", ["code:T-18", "unit:°C"]),
+        ("C-500 mg 투입", ["code:C-500", "unit:mg"]),
+        ("BK01 %", ["code:BK01", "unit:%"]),
+        ("T-5℃-10℃", ["code:T-5", "unit:°C", "unit:°C"]),  # scanning goes on after the unit
+        ("C-500mg", ["code:C-500mg"]),  # no break inside the run
+        ("A-5  kg", ["code:A-5"]),  # two spaces
+        ("A-5 min", ["code:A-5"]),  # a word, not a unit
+        ("BK01- kg", ["code:BK01"]),  # as written, the run does not end in a digit
+        ("pH kg", []),  # not a code
+        ("A1 L2", ["code:A1", "code:L2"]),  # a digit follows the unit: the next code
+        ("A-5 m2", ["code:A-5", "code:m2"]),
+        ("A-5 m²", ["code:A-5", "code:m2"]),
+        ("CO2 5%", ["code:CO2", "unit:%"]),
+    ],
+)
+def test_a_unit_after_a_code_that_ends_in_a_digit(text, expected):
+    assert _others(text) == expected
 
 
 @pytest.mark.parametrize(

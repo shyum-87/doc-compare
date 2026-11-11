@@ -36,8 +36,12 @@ _FOLD = str.maketrans(
     }
 )
 
-# NFKC turns a superscript into a plain character, so '10³' would read as 103.
-_SUPERSCRIPT_RUN = re.compile("[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+")
+# NFKC turns a superscript into a plain character, so '10³' would read as 103. Only a
+# superscript right after a digit is marked: the '²' of 'cm²' stays with its letters, as in
+# 'cm2'.
+_SUPERSCRIPT_AFTER_DIGIT = re.compile(
+    "(?<=[0-9\N{FULLWIDTH DIGIT ZERO}-\N{FULLWIDTH DIGIT NINE}])[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]"
+)
 
 _PLAIN_DOT = re.compile(r"[0-9]+(?:\.[0-9]+)?")
 _GROUPED_DOT = re.compile(r"[1-9][0-9]{0,2}(?:,[0-9]{3})+(?:\.[0-9]+)?")
@@ -54,9 +58,10 @@ _ASCII_ALNUM = _ASCII_LETTERS | _ASCII_DIGITS
 def normalize(text: str) -> str:
     """NFKC (full-width -> half-width, '℃' -> '°C') plus the hand-folded signs.
 
-    A '^' goes before each run of superscripts first: '10³' -> '10^3', '10⁻³' -> '10^-3'.
+    A '^' goes before a superscript right after a digit first:
+    '10³' -> '10^3', '10⁻³' -> '10^-3'.
     """
-    marked = _SUPERSCRIPT_RUN.sub(r"^\g<0>", text)
+    marked = _SUPERSCRIPT_AFTER_DIGIT.sub(r"^\g<0>", text)
     return unicodedata.normalize("NFKC", marked).translate(_FOLD)
 
 
@@ -104,7 +109,7 @@ def _is_latin_letter(char: str) -> bool:
 
 
 def _unit_at(text: str, position: int) -> Optional[tuple[str, int]]:
-    """Unit right after a number (zero or one space). Returns (unit, end position)."""
+    """Unit right after a digit (zero or one space). Returns (unit, end position)."""
     start = position + 1 if text.startswith(" ", position) else position
     for spelling in _SPELLINGS_LONGEST_FIRST:
         if not text.startswith(spelling, start):
@@ -149,6 +154,13 @@ def extract_tokens(text: str, language: Language) -> Tokens:
             if any(letter in _ASCII_DIGITS for letter in word):
                 others.append("code:" + word)
             position = match.end()
+            if scanned[position - 1] in _ASCII_DIGITS:
+                # 'A-5 kg': a unit is read after a code that ends in a digit too, unless a
+                # digit follows the unit ('A1 L2' is two codes)
+                unit = _unit_at(scanned, position)
+                if unit is not None and scanned[unit[1] : unit[1] + 1] not in _ASCII_DIGITS:
+                    others.append("unit:" + unit[0])
+                    position = unit[1]
         elif char in _ASCII_DIGITS or _leading_point_at(scanned, position):
             # '.5' keeps its point: it fits no notation, so it is compared as written
             match = _NUMBER_RE.match(scanned, position + 1 if char == "." else position)

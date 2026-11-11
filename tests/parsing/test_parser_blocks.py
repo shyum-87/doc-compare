@@ -65,6 +65,7 @@ def test_a_malformed_image_is_unclassified(parse, line):
     "block, kind, lines",
     [
         ('앞 글 ![img1](<img1.png "제목">) 뒤 글', "paragraph", [2]),
+        ("앞 ![](b.png) 뒤", "paragraph", [2]),  # not an image element, still an image
         ("- ![img1](img1.png)", "list_item", [2]),
         ("## 3.1 화면 ![img1](img1.png)", "heading", [2]),
         ('|단계|화면|\n|---|---|\n|1|없음|\n|2|![img1](<img1.png "제목">)|', "table", [5]),
@@ -108,10 +109,11 @@ def test_an_exclamation_mark_before_a_bracket_is_not_an_image(parse):
         ("2. 5 kg 투입", "2.", "5 kg 투입"),
         ("1. 2.5 kg 투입", "1.", "2.5 kg 투입"),
         ("1) 2. 확인한다", "1)", "2. 확인한다"),
+        ("1. 가열한다 2. 식힌다", "1.", "가열한다 2. 식힌다"),
         ("- 2. 확인한다", "-", "2. 확인한다"),
         ("- -18℃ 이하로 보관", "-", "-18℃ 이하로 보관"),
         ("-三호기 점검", "-", "三호기 점검"),  # a numeral that is a letter, not a number sign
-        ("-.env 파일을 확인한다", "-", ".env 파일을 확인한다"),
+        ("-.env 파일 2개를 확인한다", "-", ".env 파일 2개를 확인한다"),
     ],
 )
 def test_list_item(parse, line, marker, text):
@@ -184,11 +186,13 @@ def test_a_hyphen_before_a_digit_is_not_decided(parse, line):
             "-\N{FULLWIDTH DIGIT ONE}\N{FULLWIDTH DIGIT EIGHT}℃",
         ),
         ("-\N{VULGAR FRACTION ONE HALF} 컵", "-\N{VULGAR FRACTION ONE HALF} 컵"),
+        ("-\N{ROMAN NUMERAL FOUR} 구역", "-\N{ROMAN NUMERAL FOUR} 구역"),
+        ("-.\N{ZERO WIDTH SPACE}5 kg", "-.\N{ZERO WIDTH SPACE}5 kg"),
     ],
 )
 def test_a_hyphen_before_a_number_in_another_form_is_not_decided(parse, line, text):
-    # bold marks, a decimal point with no zero, and digits of other scripts do not
-    # turn the sign into a list marker
+    # bold marks, a decimal point with no zero, digits of other scripts and a character
+    # that is not seen inside the number do not turn the sign into a list marker
     elements, findings = parse("[PAGE 1]\n" + line)
     assert elements[1].kind == "paragraph"
     assert elements[1].text == text
@@ -231,6 +235,7 @@ def test_a_hiding_character_next_to_a_list_marker_leaves_the_line_unclassified(p
         "3. 4.",
         "1. **2. 항목**",
         "1. \N{FULLWIDTH DIGIT TWO}. 항목",
+        "2024. 5\N{ZERO WIDTH SPACE}. 1 개정",
     ],
 )
 def test_a_number_and_dot_after_a_number_and_dot_is_not_read_as_a_list_item(parse, line):

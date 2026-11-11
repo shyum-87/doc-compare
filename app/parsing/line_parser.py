@@ -68,6 +68,11 @@ def _squeezed(line: str) -> str:
     return "".join(char for char in line if not (_hides(char) or char == "*" or char.isspace()))
 
 
+def _unmarked(text: str) -> str:
+    """The text without hiding characters and '*', with its spaces kept."""
+    return "".join(char for char in text if not (_hides(char) or char == "*"))
+
+
 def _starts_hidden(text: str) -> bool:
     """True when a hiding character comes before the first character that shows."""
     for char in text:
@@ -383,7 +388,7 @@ def parse_lines(
         )
         if match:
             marker, gap, body = match.groups()
-            dotted = marker.endswith(".") and _NUMBER_DOT_RE.match(body.replace("*", ""))
+            dotted = marker.endswith(".") and _NUMBER_DOT_RE.match(_unmarked(body))
             if _starts_hidden(gap + body) or dotted:
                 # a hiding character next to the marker, or '2024. 5. 1 ...': not decided here
                 builder.unclassified(stripped, line_no, raw)
@@ -392,7 +397,7 @@ def parse_lines(
             continue
         if stripped.startswith("-"):
             rest = stripped[1:]
-            shown = rest.replace("*", "").lstrip()
+            shown = _unmarked(rest).lstrip()
             if not shown or shown.startswith("-") or _starts_hidden(rest):
                 builder.unclassified(stripped, line_no, raw)
             elif _is_number(shown[0]) or (shown[0] in ".," and _is_number(shown[1:2])):

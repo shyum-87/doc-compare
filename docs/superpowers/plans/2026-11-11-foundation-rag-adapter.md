@@ -8239,7 +8239,7 @@ Expected: 차례로 `931 passed`, `All checks passed!`, `31 files already format
 
 Run: `.venv/Scripts/python -m pytest tests/parsing/test_sample_golden.py tests/parsing/test_line_coverage.py tests/parsing/test_translation_mutations.py tests/parsing/test_ingest.py tests/parsing/test_cli.py -q`
 
-Expected: 마지막 줄이 `93 passed`
+Expected: 마지막 줄이 `104 passed`
 
 - [ ] **Step 6: 커밋한다**
 

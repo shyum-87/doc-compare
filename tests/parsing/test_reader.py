@@ -36,7 +36,7 @@ def test_a_lone_cr_ends_a_line(tmp_path):
 
 
 def test_no_other_character_ends_a_line(tmp_path):
-    text = "a\x0bb\x0cc\x1cd\x85e f g"
+    text = "a\x0bb\x0cc\x1cd\x85e\N{LINE SEPARATOR}f\N{PARAGRAPH SEPARATOR}g"
     path = tmp_path / "separators.md"
     path.write_bytes((text + "\n").encode("utf-8"))
     assert read_lines(path).lines == (text,)

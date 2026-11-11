@@ -41,6 +41,7 @@ def _document() -> Document:
 
 
 def _result(status: str, **fields: object) -> IngestResult:
+    fields.setdefault("original_language", "ko")
     return IngestResult(status=status, parser_version="0.1.0", **fields)
 
 
@@ -157,3 +158,25 @@ def test_info_findings_do_not_stop_an_ok_result():
 def test_a_result_cannot_contradict_its_status(status, fields):
     with pytest.raises(ValidationError):
         _result(status, **fields)
+
+
+def test_a_result_always_names_the_original_language():
+    failure = Failure(reason="EMPTY_DOCUMENT")
+    assert _result("FAILED", failure=failure, original_language="zh").original_language == "zh"
+    with pytest.raises(ValidationError):
+        IngestResult(status="FAILED", parser_version="0.1.0", failure=failure)
+    with pytest.raises(ValidationError):
+        _result("FAILED", failure=failure, original_language="ja")
+
+
+def test_the_original_language_survives_a_json_round_trip():
+    result = _result("FAILED", failure=Failure(reason="EMPTY_DOCUMENT"), original_language="vi")
+    assert '"original_language":"vi"' in result.model_dump_json()
+    assert IngestResult.model_validate_json(result.model_dump_json()) == result
+
+
+def test_a_source_document_is_in_the_original_language():
+    # _document() is a source document in Korean
+    assert _result("OK", documents=(_document(),), original_language="ko").status == "OK"
+    with pytest.raises(ValidationError):
+        _result("OK", documents=(_document(),), original_language="vi")

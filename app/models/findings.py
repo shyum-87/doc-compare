@@ -9,7 +9,7 @@ from typing import Literal, Optional
 
 from pydantic import Field, model_validator
 
-from app.models.document import Document, FrozenModel, Variant
+from app.models.document import Document, FrozenModel, Language, Variant
 
 Status = Literal["FAILED", "REVIEW_REQUIRED", "OK"]
 Grade = Literal["review_required", "info"]
@@ -124,6 +124,9 @@ class Failure(FrozenModel):
 class IngestResult(FrozenModel):
     status: Status
     parser_version: str
+    # What the caller declared. Without a source file no document carries it, and a
+    # FAILED result has no document at all.
+    original_language: Language
     failure: Optional[Failure] = None
     documents: tuple[Document, ...] = ()
     findings: tuple[Finding, ...] = ()
@@ -141,6 +144,9 @@ class IngestResult(FrozenModel):
             raise ValueError(f"a failure cannot have the status {self.status}")
         if not self.documents:
             raise ValueError(f"the status {self.status} needs a document")
+        for document in self.documents:
+            if document.variant == "source" and document.language != self.original_language:
+                raise ValueError("the source document is not in the original language")
         needs_review = any(finding.grade == "review_required" for finding in self.findings)
         if needs_review != (self.status == "REVIEW_REQUIRED"):
             raise ValueError(f"the status {self.status} disagrees with the findings")

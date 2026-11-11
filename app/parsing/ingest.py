@@ -13,7 +13,7 @@ import logging
 import traceback
 from collections import Counter
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, get_args
 
 from app.models.document import Document, Language, Variant
 from app.models.findings import Failure, Finding, IngestResult, new_finding
@@ -50,8 +50,13 @@ def _load(
     return document, findings
 
 
-def _failed(failure: Failure) -> IngestResult:
-    return IngestResult(status="FAILED", parser_version=PARSER_VERSION, failure=failure)
+def _failed(failure: Failure, original_language: Language) -> IngestResult:
+    return IngestResult(
+        status="FAILED",
+        parser_version=PARSER_VERSION,
+        original_language=original_language,
+        failure=failure,
+    )
 
 
 def _ingest(
@@ -66,7 +71,7 @@ def _ingest(
     main_variant: Variant = "source" if original_language == "ko" else "translated"
     main = _load(main_path, doc_id=doc_id, version=version, variant=main_variant, language="ko")
     if isinstance(main, Failure):
-        return _failed(main)
+        return _failed(main, original_language)
     documents = [main[0]]
     findings = list(main[1])
     translation_check = None
@@ -83,7 +88,7 @@ def _ingest(
                 language=original_language,
             )
             if isinstance(source, Failure):
-                return _failed(source)
+                return _failed(source, original_language)
             documents.append(source[0])
             findings.extend(source[1])
             translation_check, check_findings = check_translation(main[0], source[0])
@@ -99,6 +104,7 @@ def _ingest(
     return IngestResult(
         status=status,
         parser_version=PARSER_VERSION,
+        original_language=original_language,
         documents=tuple(documents),
         findings=tuple(findings),
         translation_check=translation_check,
@@ -114,6 +120,10 @@ def ingest(
     source_path: Optional[Path] = None,
 ) -> IngestResult:
     """Read one document (and its source, for a translated one) and check it."""
+    # Mistakes of the caller are refused before anything is read. Every result names the
+    # original language, so a result cannot be built around a language that is not one.
+    if original_language not in get_args(Language):
+        raise ValueError("the original language is not one of " + ", ".join(get_args(Language)))
     if original_language == "ko" and source_path is not None:
         raise ValueError("a Korean baseline document takes no source file")
     try:
@@ -129,4 +139,4 @@ def ingest(
         where = f"{Path(frames[-1].filename).name}:{frames[-1].lineno}" if frames else "unknown"
         # The message of the exception may quote document text, so only its type is logged.
         logger.error("internal error: %s at %s", type(error).__name__, where)
-        return _failed(Failure(reason="INTERNAL_ERROR"))
+        return _failed(Failure(reason="INTERNAL_ERROR"), original_language)

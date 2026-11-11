@@ -19,6 +19,8 @@
 
 이 계획의 코드, 명령, 기대 출력은 저장소를 새로 클론한 폴더에서 Task 순서대로 실제로 실행해 얻은 것이다. 실행한 환경은 Windows, Git Bash, Python 3.14.4다. **사내 실행 환경인 Python 3.10.11에서는 아직 실행하지 않았다.** 그 확인은 Task 19에서 만드는 `docs/INHOUSE_CHECK.md`의 절차로 한다.
 
+Task 1~19의 코드 블록과 기대 출력은 Task 19를 마친 시점의 것이다. 그 뒤 전체 검토에서 고친 내용은 Task에 반영하지 않고 맨 끝의 "최종 검토 뒤 변경"에 따로 적었다. `docs/INHOUSE_CHECK.md`만은 Task 19의 블록이 지금 파일과 같다.
+
 ## 작업 규칙
 
 - **명령은 저장소 루트에서 Git Bash로 실행한다.** PowerShell에서는 `.venv/Scripts/python`을 `.venv\Scripts\python`으로, Linux와 macOS에서는 `.venv/bin/python`으로 바꾼다.
@@ -8329,6 +8331,10 @@ python -m venv .venv
 
 `--original-language`에는 원문 언어에 맞춰 `vi`, `en`, `zh`, `ko` 중 하나를 준다. 경로나 문서 ID에 공백이 있으면 따옴표로 감싼다.
 
+프로그램은 어느 파일이 번역본이고 어느 파일이 원문인지, `--original-language`가 맞는지 확인하지 않는다. 두 파일을 바꿔 넣거나 언어를 틀리게 주어도 `OK`가 나올 수 있다. 실행하기 전에 주 파일이 한국어 `rag_ko.md`이고 `--source`가 번역 전 `rag.md`인지, 언어가 맞는지 직접 확인한다.
+
+실제 파일은 이 저장소 폴더 밖에 두고 경로로 가리킨다. `.gitignore`는 `.md` 파일을 걸러 주지 않으므로, 저장소 폴더 안에 두면 커밋에 섞일 수 있다.
+
 화면(stderr)에 아래와 같은 줄이 나온다. 이 줄에는 본문이 없다. 한국어 기준 문서는 읽은 파일 줄이 `read the source file` 하나만 나온다(번역하지 않은 문서는 그 자체가 원문이다).
 
 ```text
@@ -8480,3 +8486,27 @@ git push -u origin main
 - Python 3.10.11에서의 실행과 실제 파일 확인은 사내에서 `docs/INHOUSE_CHECK.md`대로 해야 한다.
 - 설계 §11의 미결 항목은 그대로 남아 있다.
 - 다음은 단위 ②(LLM 게이트웨이)의 설계다.
+
+---
+
+## 최종 검토 뒤 변경
+
+Task 19까지 마친 뒤 구현 전체를 한 번 더 검토하고 아래를 고쳤다. 위 Task의 코드 블록과 기대 출력에는 반영하지 않았으므로, 지금 코드와 다른 곳은 아래가 전부다.
+
+**코드**
+
+- `app/models/findings.py`: `IngestResult`에 `original_language`를 더했다. 필수 값이고 `FAILED` 결과에도 들어간다. 원문 파일 없이 번역본만 읽으면 호출하는 쪽이 알려 준 원문 언어가 결과 어디에도 남지 않았기 때문이다. 결과에 든 `source` 문서의 언어가 이 값과 다르면 모델이 받지 않는다.
+- `app/parsing/ingest.py`: 모든 결과에 `original_language`를 싣는다. `ingest()`에 `ko`, `vi`, `en`, `zh`가 아닌 원문 언어를 주면 아무것도 읽기 전에 `ValueError`를 낸다(`ko`와 원문 파일을 함께 준 경우와 같은 호출 오류다). 명령줄은 `--original-language`의 선택지로 이미 막고 있어 바뀐 것이 없다.
+- 결과 JSON에 필드가 하나 늘었다. 파싱 규칙과 토큰 규칙은 바뀌지 않아 `PARSER_VERSION`은 `0.1.0` 그대로다.
+
+**테스트**
+
+- `tests/models/test_findings.py`: 테스트 3개를 더했다(원문 언어는 항상 있어야 한다, JSON으로 오가도 남는다, `source` 문서의 언어와 같아야 한다). 51개가 됐다.
+- `tests/parsing/test_ingest.py`: 결과마다 `original_language`를 확인하고, 알 수 없는 원문 언어 4가지가 `ValueError`인지 확인한다. 구조가 깨진 입력 4가지는 `REVIEW_REQUIRED`라고 정확히 확인하도록 조였다(전에는 `OK`만 아니면 통과했다). 46개가 됐다.
+- 전체는 `956 passed`다. Task 19 Step 5의 명령은 `126 passed`다.
+
+**문서**
+
+- 설계 §7.1과 §8에 `original_language`를 적었다. §11에 미결 두 가지를 더했다: 번역본과 원문을 바꿔 넣거나 원문 언어를 틀리게 주어도 알아채지 못한다, 결과 모델이 문서·발견 항목·번역본 점검 결과가 서로 맞는지 확인하지 않는다. 둘 다 사용자가 정한다.
+- `docs/INHOUSE_CHECK.md` §3에 실행 전에 파일의 역할과 언어를 직접 확인하라는 것과 실제 파일을 저장소 폴더 밖에 두라는 것을 더했다.
+- `README.md`에 `docs/DECISIONS.md`와 단위 ① 설계의 링크, 그리고 설계 문서 이후의 결정(D-004, D-011, D-012)이 우선한다는 안내를 더했다. 첫 줄의 "한국–일본 SOP 비교"와 `CLAUDE.md`의 "한·일" 표현은 일본어 문서가 대상인지(설계 §11) 정해질 때까지 그대로 두었다.

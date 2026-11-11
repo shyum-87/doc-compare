@@ -45,6 +45,7 @@ def test_a_korean_baseline_document(ko_sample):
     result = _ingest(ko_sample)
     assert result.status == "OK"
     assert result.parser_version == PARSER_VERSION
+    assert result.original_language == "ko"
     assert result.failure is None
     assert result.translation_check is None
     assert _codes(result) == {"IMAGE_PRESENT": 3}
@@ -64,6 +65,7 @@ def test_a_korean_baseline_document(ko_sample):
 def test_a_translated_document_with_its_source(ko_sample, source_samples, language):
     result = _ingest(ko_sample, language, source_samples[language])
     assert result.status == "OK"
+    assert result.original_language == language
     assert _codes(result) == {"IMAGE_PRESENT": 6}
 
     translated, source = result.documents  # the main file first
@@ -89,11 +91,20 @@ def test_a_translated_document_without_its_source_needs_review(ko_sample, langua
     assert finding.element_ids == ()  # it is about the whole document
     assert result.translation_check is None
     assert [document.variant for document in result.documents] == ["translated"]
+    # with no source document to carry it, the result itself says what the original was
+    assert result.original_language == language
 
 
 def test_a_korean_baseline_document_takes_no_source(ko_sample, source_samples):
     with pytest.raises(ValueError):
         _ingest(ko_sample, "ko", source_samples["en"])
+
+
+@pytest.mark.parametrize("language", ["ja", "KO", "", None])
+def test_an_unknown_original_language_is_refused(ko_sample, language):
+    # a mistake of the caller, like a source file for a Korean document: no result at all
+    with pytest.raises(ValueError):
+        _ingest(ko_sample, language)
 
 
 def test_a_changed_number_in_the_translation_needs_review(tmp_path, ko_sample, source_samples):
@@ -156,6 +167,7 @@ def test_a_file_that_is_not_utf8_fails(tmp_path):
 def test_a_broken_main_file_of_a_translated_document(tmp_path, source_samples):
     result = _ingest(tmp_path / "missing.md", "en", source_samples["en"])
     _assert_failed(result, "FILE_UNREADABLE", "translated")
+    assert result.original_language == "en"
 
 
 @pytest.mark.parametrize(
@@ -203,7 +215,10 @@ def test_lines_that_fit_no_rule_need_review(tmp_path):
 )
 def test_broken_structure_never_escapes_as_an_exception_or_as_ok(tmp_path, data):
     result = _ingest(_write(tmp_path, "odd.md", data))
-    assert result.status in ("FAILED", "REVIEW_REQUIRED")
+    # read as far as it can be read and handed to a person: an internal error here
+    # would mean that the parser gave up on its input
+    assert result.status == "REVIEW_REQUIRED"
+    assert result.failure is None
 
 
 # --- unexpected errors ----------------------------------------------------------------
@@ -245,7 +260,9 @@ def test_an_error_while_checking_the_translation_fails_closed(
         raise error("e0001")
 
     monkeypatch.setattr(ingest_module, "check_translation", explode)
-    _assert_failed(_ingest(ko_sample, "en", source_samples["en"]), "INTERNAL_ERROR", None)
+    result = _ingest(ko_sample, "en", source_samples["en"])
+    _assert_failed(result, "INTERNAL_ERROR", None)
+    assert result.original_language == "en"
 
 
 def test_a_lost_line_in_the_source_file_fails_closed(monkeypatch, ko_sample, source_samples):

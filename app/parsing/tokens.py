@@ -20,8 +20,24 @@ UNITS: tuple[str, ...] = (
     "mL", "L", "Pa", "kPa", "MPa", "rpm", "ppm",
 )  # fmt: skip
 
-# NFKC leaves these two alone, so they are folded by hand: U+2212 minus, U+301C wave dash.
-_FOLD = str.maketrans({"−": "-", "〜": "~"})
+# Other ways of writing a unit of the table. NFKC turns '㎖' into 'ml' and 'ℓ' into 'l'.
+UNIT_SPELLINGS: dict[str, str] = {"ml": "mL", "l": "L"}
+
+# NFKC leaves these alone, so they are folded by hand. The em dash is left as it is:
+# Chinese writes it twice as a punctuation mark.
+_FOLD = str.maketrans(
+    {
+        "\N{HYPHEN}": "-",  # NFKC turns the non-breaking hyphen U+2011 into this one
+        "\N{FIGURE DASH}": "-",
+        "\N{EN DASH}": "-",
+        "\N{MINUS SIGN}": "-",
+        "\N{WAVE DASH}": "~",
+        "\N{TILDE OPERATOR}": "~",
+    }
+)
+
+# NFKC turns a superscript into a plain character, so '10³' would read as 103.
+_SUPERSCRIPT_RUN = re.compile("[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+")
 
 _PLAIN_DOT = re.compile(r"[0-9]+(?:\.[0-9]+)?")
 _GROUPED_DOT = re.compile(r"[1-9][0-9]{0,2}(?:,[0-9]{3})+(?:\.[0-9]+)?")
@@ -36,12 +52,18 @@ _ASCII_ALNUM = _ASCII_LETTERS | _ASCII_DIGITS
 
 
 def normalize(text: str) -> str:
-    """NFKC (full-width -> half-width, '℃' -> '°C') plus the two hand-folded signs."""
-    return unicodedata.normalize("NFKC", text).translate(_FOLD)
+    """NFKC (full-width -> half-width, '℃' -> '°C') plus the hand-folded signs.
+
+    A '^' goes before each run of superscripts first: '10³' -> '10^3', '10⁻³' -> '10^-3'.
+    """
+    marked = _SUPERSCRIPT_RUN.sub(r"^\g<0>", text)
+    return unicodedata.normalize("NFKC", marked).translate(_FOLD)
 
 
-_UNITS_LONGEST_FIRST: tuple[str, ...] = tuple(
-    sorted({normalize(unit) for unit in UNITS}, key=lambda unit: (-len(unit), unit))
+_UNIT_BY_SPELLING: dict[str, str] = {normalize(unit): normalize(unit) for unit in UNITS}
+_UNIT_BY_SPELLING.update(UNIT_SPELLINGS)
+_SPELLINGS_LONGEST_FIRST: tuple[str, ...] = tuple(
+    sorted(_UNIT_BY_SPELLING, key=lambda spelling: (-len(spelling), spelling))
 )
 
 
@@ -84,14 +106,23 @@ def _is_latin_letter(char: str) -> bool:
 def _unit_at(text: str, position: int) -> Optional[tuple[str, int]]:
     """Unit right after a number (zero or one space). Returns (unit, end position)."""
     start = position + 1 if text.startswith(" ", position) else position
-    for unit in _UNITS_LONGEST_FIRST:
-        if not text.startswith(unit, start):
+    for spelling in _SPELLINGS_LONGEST_FIRST:
+        if not text.startswith(spelling, start):
             continue
-        end = start + len(unit)
+        end = start + len(spelling)
         if end < len(text) and _is_latin_letter(text[end]):
             continue  # '30 min': the 'm' is the start of a word, not a unit
-        return unit, end
+        return _UNIT_BY_SPELLING[spelling], end
     return None
+
+
+def _leading_point_at(text: str, position: int) -> bool:
+    """'.5': a '.' right before a digit, and not after a letter or a digit ('No.5')."""
+    return (
+        text.startswith(".", position)
+        and text[position + 1 : position + 2] in _ASCII_DIGITS
+        and not text[position - 1 : position].isalnum()
+    )
 
 
 def extract_tokens(text: str, language: Language) -> Tokens:
@@ -107,7 +138,8 @@ def extract_tokens(text: str, language: Language) -> Tokens:
         elif char == "-":
             following = scanned[position + 1 : position + 2]
             previous = scanned[position - 1 : position]
-            if following in _ASCII_DIGITS and previous not in _ASCII_ALNUM:
+            before_number = following in _ASCII_DIGITS or _leading_point_at(scanned, position + 1)
+            if before_number and previous not in _ASCII_ALNUM:
                 others.append("sym:neg")
             position += 1
         elif char in _ASCII_LETTERS:
@@ -117,10 +149,11 @@ def extract_tokens(text: str, language: Language) -> Tokens:
             if any(letter in _ASCII_DIGITS for letter in word):
                 others.append("code:" + word)
             position = match.end()
-        elif char in _ASCII_DIGITS:
-            match = _NUMBER_RE.match(scanned, position)
+        elif char in _ASCII_DIGITS or _leading_point_at(scanned, position):
+            # '.5' keeps its point: it fits no notation, so it is compared as written
+            match = _NUMBER_RE.match(scanned, position + 1 if char == "." else position)
             assert match is not None
-            raw = match.group()
+            raw = scanned[position : match.end()]
             numbers.append(NumberToken(raw=raw, value=parse_number(raw, language)))
             position = match.end()
             unit = _unit_at(scanned, position)

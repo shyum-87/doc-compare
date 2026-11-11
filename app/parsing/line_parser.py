@@ -41,7 +41,9 @@ class _Builder:
         self.elements: list[Element] = []
         self.findings: list[Finding] = []
         self.page: Optional[int] = None
-        self.headings: list[tuple[int, str]] = []  # (level, label)
+        self.seen_page_marker = False
+        self.before_first_page: list[Element] = []
+        self.headings: list[tuple[int, str, Optional[str]]] = []  # (level, label, number)
 
     def next_id(self) -> str:
         return element_id_for(len(self.elements) + 1)
@@ -49,13 +51,15 @@ class _Builder:
     def locator(self, line_start: int, line_end: int) -> Locator:
         return Locator(
             page=self.page,
-            section_path=tuple(label for _, label in self.headings),
+            section_path=tuple(label for _, label, _ in self.headings),
             line_start=line_start,
             line_end=line_end,
         )
 
     def add(self, element: Element) -> None:
         self.elements.append(element)
+        if not self.seen_page_marker:
+            self.before_first_page.append(element)
 
     def flag(self, code: FindingCode, element: Element) -> None:
         self.findings.append(
@@ -69,16 +73,29 @@ class _Builder:
         )
 
     def page_marker(self, number: int, line_no: int, raw: str) -> None:
-        self.page = number
-        self.add(
-            PageMarker(
-                element_id=self.next_id(),
-                locator=self.locator(line_no, line_no),
-                raw=raw,
-                text=raw.strip(),
-                page=number,
+        previous = self.page
+        if not self.seen_page_marker and self.before_first_page:
+            self.findings.append(
+                new_finding(
+                    "CONTENT_BEFORE_FIRST_PAGE",
+                    self.variant,
+                    element_ids=tuple(e.element_id for e in self.before_first_page),
+                    line_start=self.before_first_page[0].locator.line_start,
+                    line_end=self.before_first_page[-1].locator.line_end,
+                )
             )
+        self.seen_page_marker = True
+        self.page = number
+        element = PageMarker(
+            element_id=self.next_id(),
+            locator=self.locator(line_no, line_no),
+            raw=raw,
+            text=raw.strip(),
+            page=number,
         )
+        self.add(element)
+        if previous is not None and number <= previous:
+            self.flag("PAGE_NUMBER_NOT_INCREASING", element)
 
     def heading(self, level: int, rest: str, line_no: int, raw: str) -> None:
         match = _HEADING_NUMBER_RE.fullmatch(_BOLD_RE.sub(r"\1", rest))
@@ -86,18 +103,25 @@ class _Builder:
         title = clean_text(match.group(2) if match else rest)
         while self.headings and self.headings[-1][0] >= level:
             self.headings.pop()
-        self.headings.append((level, number if number is not None else title))
-        self.add(
-            Heading(
-                element_id=self.next_id(),
-                locator=self.locator(line_no, line_no),
-                raw=raw,
-                text=clean_text(rest),
-                level=level,
-                number=number,
-                title=title,
-            )
+        parent_number = self.headings[-1][2] if self.headings else None
+        mismatch = (
+            number is not None
+            and parent_number is not None
+            and not number.startswith(parent_number + ".")
         )
+        self.headings.append((level, number if number is not None else title, number))
+        element = Heading(
+            element_id=self.next_id(),
+            locator=self.locator(line_no, line_no),
+            raw=raw,
+            text=clean_text(rest),
+            level=level,
+            number=number,
+            title=title,
+        )
+        self.add(element)
+        if mismatch:
+            self.flag("HEADING_NUMBER_MISMATCH", element)
 
     def paragraph(self, stripped: str, line_no: int, raw: str) -> None:
         self.add(
@@ -163,4 +187,6 @@ def parse_lines(
         # 7. paragraph: one line is one paragraph
         builder.paragraph(stripped, line_no, raw)
 
+    if not builder.seen_page_marker:
+        builder.findings.append(new_finding("NO_PAGE_MARKER", variant))
     return tuple(builder.elements), tuple(builder.findings)

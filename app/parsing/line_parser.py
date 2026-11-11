@@ -7,6 +7,7 @@ lines that look structural but fit no rule become `unclassified` elements with a
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Optional
 
 from app.models.document import (
@@ -21,16 +22,17 @@ from app.models.document import (
 )
 from app.models.findings import Finding, FindingCode, new_finding
 
-_PAGE_RE = re.compile(r"\[PAGE ?(\d+)\]")
+_PAGE_RE = re.compile(r"\[PAGE ?([0-9]{1,6})\]")
 _HEADING_RE = re.compile(r"(#{1,6}) +(\S.*)")
-_HEADING_NUMBER_RE = re.compile(r"(\d+(?:\.\d+)*)\.?\s+(\S.*)")
+_HEADING_NUMBER_RE = re.compile(r"([0-9]+(?:\.[0-9]+)*)\.?\s+(\S.*)")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_INVISIBLE = ("Cc", "Cf")  # Unicode categories: control and format characters
 
 
 def clean_text(value: str) -> str:
     """Strip paired ** and turn <br> into newlines. Characters are never changed."""
-    return _BOLD_RE.sub(r"\1", _BR_RE.sub("\n", value))
+    return _BR_RE.sub("\n", _BOLD_RE.sub(r"\1", value))
 
 
 class _Builder:
@@ -79,7 +81,7 @@ class _Builder:
         )
 
     def heading(self, level: int, rest: str, line_no: int, raw: str) -> None:
-        match = _HEADING_NUMBER_RE.fullmatch(rest)
+        match = _HEADING_NUMBER_RE.fullmatch(_BOLD_RE.sub(r"\1", rest))
         number = match.group(1) if match else None
         title = clean_text(match.group(2) if match else rest)
         while self.headings and self.headings[-1][0] >= level:
@@ -132,6 +134,12 @@ def parse_lines(
 
         # 1. blank line
         if not stripped:
+            continue
+
+        # a line that starts with an invisible character is not interpreted:
+        # the character would hide a marker from every rule below
+        if unicodedata.category(stripped[0]) in _INVISIBLE:
+            builder.unclassified(stripped, line_no, raw)
             continue
 
         # 2. page marker

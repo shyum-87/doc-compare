@@ -13,6 +13,8 @@ from typing import Optional
 from app.models.document import (
     Element,
     Heading,
+    Image,
+    ListItem,
     Locator,
     PageMarker,
     Paragraph,
@@ -29,6 +31,13 @@ _HEADING_RE = re.compile(r"(#{1,6}) +(\S.*)")
 _HEADING_NUMBER_RE = re.compile(r"([0-9]+(?:\.[0-9]+)*)\.?\s+(\S.*)")
 _SEPARATOR_CELL_RE = re.compile(r":?-+:?")
 _CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
+_IMAGE_ANGLE_RE = re.compile(r'!\[([^\]]*)\]\(<([^">]+?)(?:\s+"([^"]*)")?\s*>\)')
+_IMAGE_PLAIN_RE = re.compile(r'!\[([^\]]*)\]\(([^\s"<>()]+)(?:\s+"([^"]*)")?\)')
+_LIST_PAREN_RE = re.compile(r"(\d+\))\s*(\S.*)")
+_LIST_DOT_RE = re.compile(r"(\d+\.)\s+(\S.*)")
+_LIST_BULLET_RE = re.compile(r"([-*])\s+(\S.*)")
+_RULE_LINE_RE = re.compile(r"(?:-{3,}|\*{3,}|_{3,})")
+_HTML_LINE_RE = re.compile(r"</?[A-Za-z][^>]*>")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 # characters that show nothing of their own: control and format characters, code points
@@ -224,15 +233,40 @@ class _Builder:
             if len(cells) != len(header):
                 self.flag("TABLE_ROW_WIDTH_MISMATCH", element, line_start + offset)
 
-    def paragraph(self, stripped: str, line_no: int, raw: str) -> None:
+    def image(self, match: re.Match[str], line_no: int, raw: str) -> None:
+        title = match.group(3) or ""
+        element = Image(
+            element_id=self.next_id(),
+            locator=self.locator(line_no, line_no),
+            raw=raw,
+            text=title,
+            image_id=match.group(1),
+            file_name=match.group(2).strip(),
+            title=title,
+        )
+        self.add(element)
+        self.flag("IMAGE_PRESENT", element)
+
+    def list_item(self, marker: str, body: str, line_no: int, raw: str) -> None:
         self.add(
-            Paragraph(
+            ListItem(
                 element_id=self.next_id(),
                 locator=self.locator(line_no, line_no),
                 raw=raw,
-                text=clean_text(stripped),
+                text=clean_text(body),
+                marker=marker,
             )
         )
+
+    def paragraph(self, stripped: str, line_no: int, raw: str) -> Paragraph:
+        element = Paragraph(
+            element_id=self.next_id(),
+            locator=self.locator(line_no, line_no),
+            raw=raw,
+            text=clean_text(stripped),
+        )
+        self.add(element)
+        return element
 
     def unclassified(self, stripped: str, line_no: int, raw: str) -> None:
         element = Unclassified(
@@ -299,6 +333,45 @@ def parse_lines(
             else:
                 for offset, block_line in enumerate(block):
                     builder.unclassified(block_line.strip(), line_no + offset, block_line)
+            continue
+
+        # 5. image
+        if stripped.startswith("!["):
+            match = _IMAGE_ANGLE_RE.fullmatch(stripped) or _IMAGE_PLAIN_RE.fullmatch(stripped)
+            if match:
+                builder.image(match, line_no, raw)
+            else:
+                builder.unclassified(stripped, line_no, raw)
+            continue
+
+        # 8 (checked early). lines that look structural but are not interpreted
+        if (
+            stripped.startswith(("```", "~~~", ">"))
+            or _RULE_LINE_RE.fullmatch(stripped)
+            or _HTML_LINE_RE.match(stripped)
+        ):
+            builder.unclassified(stripped, line_no, raw)
+            continue
+
+        # 6. list item
+        match = (
+            _LIST_PAREN_RE.fullmatch(stripped)
+            or _LIST_DOT_RE.fullmatch(stripped)
+            or _LIST_BULLET_RE.fullmatch(stripped)
+        )
+        if match:
+            builder.list_item(match.group(1), match.group(2), line_no, raw)
+            continue
+        if stripped.startswith("-"):
+            rest = stripped[1:]
+            if rest[:1].isdigit():
+                # '-18℃ ...': list item or negative number? Not decided here.
+                element = builder.paragraph(stripped, line_no, raw)
+                builder.flag("AMBIGUOUS_LIST_OR_NEGATIVE", element)
+            elif rest and not rest.startswith("-"):
+                builder.list_item("-", rest, line_no, raw)
+            else:
+                builder.unclassified(stripped, line_no, raw)
             continue
 
         # 7. paragraph: one line is one paragraph

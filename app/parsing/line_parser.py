@@ -33,10 +33,12 @@ _SEPARATOR_CELL_RE = re.compile(r":?-+:?")
 _CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
 _IMAGE_ANGLE_RE = re.compile(r'!\[([^\]]*)\]\(<([^">]+?)(?:\s+"([^"]*)")?\s*>\)')
 _IMAGE_PLAIN_RE = re.compile(r'!\[([^\]]*)\]\(([^\s"<>()]+)(?:\s+"([^"]*)")?\)')
-_LIST_PAREN_RE = re.compile(r"(\d+\))\s*(\S.*)")
-_LIST_DOT_RE = re.compile(r"(\d+\.)\s+(\S.*)")
-_LIST_BULLET_RE = re.compile(r"([-*])\s+(\S.*)")
-_RULE_LINE_RE = re.compile(r"(?:-{3,}|\*{3,}|_{3,})")
+_IMAGE_MARK_RE = re.compile(r"!\[[^\]]*\]\(")
+_LIST_PAREN_RE = re.compile(r"(\d+\))(\s*)(\S.*)")
+_LIST_DOT_RE = re.compile(r"(\d+\.)(\s+)(\S.*)")
+_LIST_BULLET_RE = re.compile(r"([-*])(\s+)(\S.*)")
+_NUMBER_DOT_RE = re.compile(r"\d+\.(?:\s|$)")
+_RULE_LINE_RE = re.compile(r"(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,}")
 _HTML_LINE_RE = re.compile(r"</?[A-Za-z][^>]*>")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
@@ -64,6 +66,21 @@ def _hides(char: str) -> bool:
 def _squeezed(line: str) -> str:
     """The line without what a reader does not see: hiding characters, '*' and spaces."""
     return "".join(char for char in line if not (_hides(char) or char == "*" or char.isspace()))
+
+
+def _starts_hidden(text: str) -> bool:
+    """True when a hiding character comes before the first character that shows."""
+    for char in text:
+        if _hides(char):
+            return True
+        if not (char == "*" or char.isspace()):
+            return False
+    return False
+
+
+def _is_number(char: str) -> bool:
+    """True for a character of a number category: a digit of any script, a fraction, ..."""
+    return bool(char) and unicodedata.category(char).startswith("N")
 
 
 def _split_heading(rest: str) -> tuple[Optional[str], str]:
@@ -104,7 +121,7 @@ def split_table_row(line: str) -> list[str]:
 
 
 def _is_separator_row(line: str) -> bool:
-    """True for a pipe line whose every cell, as written, is dashes with optional colons."""
+    """True when every cell of the line, as written, is dashes with optional colons."""
     return all(_SEPARATOR_CELL_RE.fullmatch(cell) for cell in _cells_as_written(line))
 
 
@@ -149,6 +166,11 @@ class _Builder:
         self.elements.append(element)
         if not self.seen_page_marker:
             self.before_first_page.append(element)
+        # an image inside a heading, a table, a list item or a paragraph is not read either
+        if element.kind not in ("image", "unclassified"):
+            for offset, line in enumerate(element.raw.split("\n")):
+                if _IMAGE_MARK_RE.search(line):
+                    self.flag("IMAGE_PRESENT", element, element.locator.line_start + offset)
 
     def flag(self, code: FindingCode, element: Element, line: Optional[int] = None) -> None:
         self.findings.append(
@@ -338,7 +360,7 @@ def parse_lines(
         # 5. image
         if stripped.startswith("!["):
             match = _IMAGE_ANGLE_RE.fullmatch(stripped) or _IMAGE_PLAIN_RE.fullmatch(stripped)
-            if match:
+            if match and match.group(1).strip() and match.group(2).strip():
                 builder.image(match, line_no, raw)
             else:
                 builder.unclassified(stripped, line_no, raw)
@@ -346,7 +368,7 @@ def parse_lines(
 
         # 8 (checked early). lines that look structural but are not interpreted
         if (
-            stripped.startswith(("```", "~~~", ">"))
+            stripped.startswith(("```", "~~~", ">", "<!--"))
             or _RULE_LINE_RE.fullmatch(stripped)
             or _HTML_LINE_RE.match(stripped)
         ):
@@ -360,18 +382,25 @@ def parse_lines(
             or _LIST_BULLET_RE.fullmatch(stripped)
         )
         if match:
-            builder.list_item(match.group(1), match.group(2), line_no, raw)
+            marker, gap, body = match.groups()
+            dotted = marker.endswith(".") and _NUMBER_DOT_RE.match(body.replace("*", ""))
+            if _starts_hidden(gap + body) or dotted:
+                # a hiding character next to the marker, or '2024. 5. 1 ...': not decided here
+                builder.unclassified(stripped, line_no, raw)
+            else:
+                builder.list_item(marker, body, line_no, raw)
             continue
         if stripped.startswith("-"):
             rest = stripped[1:]
-            if rest[:1].isdigit():
-                # '-18℃ ...': list item or negative number? Not decided here.
+            shown = rest.replace("*", "").lstrip()
+            if not shown or shown.startswith("-") or _starts_hidden(rest):
+                builder.unclassified(stripped, line_no, raw)
+            elif _is_number(shown[0]) or (shown[0] in ".," and _is_number(shown[1:2])):
+                # '-18℃ ...', '-**18℃**', '-.5': list item or negative number? Not decided here.
                 element = builder.paragraph(stripped, line_no, raw)
                 builder.flag("AMBIGUOUS_LIST_OR_NEGATIVE", element)
-            elif rest and not rest.startswith("-"):
-                builder.list_item("-", rest, line_no, raw)
             else:
-                builder.unclassified(stripped, line_no, raw)
+                builder.list_item("-", rest, line_no, raw)
             continue
 
         # 7. paragraph: one line is one paragraph

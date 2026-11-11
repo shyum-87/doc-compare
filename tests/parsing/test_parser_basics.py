@@ -6,6 +6,11 @@ import pytest
 
 from app.parsing.line_parser import clean_text
 
+# 'Sản xuất' written with combining marks, as decomposed (NFD) Vietnamese text has it
+SAN_XUAT = (
+    "Sa\N{COMBINING HOOK ABOVE}n xua\N{COMBINING CIRCUMFLEX ACCENT}\N{COMBINING ACUTE ACCENT}t"
+)
+
 
 def test_blank_lines_make_no_element(parse):
     elements, _ = parse("\n   \n\t\n본문이다.\n\n")
@@ -19,7 +24,10 @@ def test_element_ids_follow_the_order_in_the_file(parse):
     assert [element.locator.line_start for element in elements] == [1, 2, 3, 5]
 
 
-@pytest.mark.parametrize("line, page", [("[PAGE 8]", 8), ("[PAGE9]", 9), ("  [PAGE 10]  ", 10)])
+@pytest.mark.parametrize(
+    "line, page",
+    [("[PAGE 8]", 8), ("[PAGE9]", 9), ("  [PAGE 10]  ", 10), ("[PAGE 123456]", 123456)],
+)
 def test_page_marker(parse, line, page):
     elements, findings = parse(line)
     assert elements[0].kind == "page_marker"
@@ -60,6 +68,31 @@ def test_a_malformed_page_marker_is_unclassified(parse, line):
     assert (findings[0].line_start, findings[0].line_end) == (2, 2)
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "**[PAGE 9]**",
+        "[**PAGE 9**]",
+        "[\N{ZERO WIDTH SPACE}PAGE 9]",
+        "[P\N{HANGUL FILLER}AGE 9]",
+        "[ PAGE 9]",
+        "[PAGE 9]\N{ZERO WIDTH SPACE}",
+        "본문이 끝난다.[PAGE 9]",
+        "## 3.1 조회 [page 9]",
+    ],
+)
+def test_a_line_that_holds_a_page_marker_and_more_is_unclassified(parse, line):
+    elements, findings = parse("[PAGE 8]\n" + line + "\n문단이다.")
+    assert elements[1].kind == "unclassified"
+    assert elements[1].raw == line
+    assert elements[1].text == line
+    assert [finding.code for finding in findings] == ["UNCLASSIFIED_LINE"]
+    assert findings[0].element_ids == ("e0002",)
+    assert elements[2].kind == "paragraph"
+    assert elements[2].locator.page == 8  # the wrapped marker did not change the page
+    assert elements[2].locator.section_path == ()  # and the line did not open a section
+
+
 def test_a_page_number_of_any_length_cannot_stop_the_parser(parse):
     elements, findings = parse("[PAGE 1]\n[PAGE " + "9" * 5000 + "]")
     assert elements[1].kind == "unclassified"
@@ -92,6 +125,7 @@ def test_heading(parse, line, level, number, title):
         ("## **3.** 제조", "3", "제조", "3. 제조"),
         ("### 3.1 **배합** 전<br>조회", "3.1", "배합 전\n조회", "3.1 배합 전\n조회"),
         ("## **주의** 사항", None, "주의 사항", "주의 사항"),
+        ("### 3.1 ****가****", "3.1", "**가**", "3.1 **가**"),
         ("## \N{FULLWIDTH DIGIT THREE}. 제조", None, None, None),
     ],
 )
@@ -148,18 +182,85 @@ def test_a_malformed_heading_is_unclassified(parse, line):
         "\N{ZERO WIDTH SPACE}",
         "\N{LEFT-TO-RIGHT MARK}",
         "\x00",
+        "\N{HANGUL FILLER}",
+        "\N{HALFWIDTH HANGUL FILLER}",
+        "\N{HANGUL CHOSEONG FILLER}",
+        "\N{HANGUL JUNGSEONG FILLER}",
+        "\N{BRAILLE PATTERN BLANK}",
+        "\N{COMBINING GRAPHEME JOINER}",
+        "\N{COMBINING ENCLOSING CIRCLE}",
     ],
 )
 @pytest.mark.parametrize("rest", ["[PAGE 9]", "### 3.1 조회", "본문이다."])
-def test_a_line_that_starts_with_an_invisible_character_is_not_interpreted(parse, mark, rest):
+def test_a_line_that_starts_with_a_hiding_character_is_not_interpreted(parse, mark, rest):
     elements, findings = parse("[PAGE 8]\n## 3. 제조\n" + mark + rest + "\n문단이다.")
     assert elements[2].kind == "unclassified"
     assert elements[2].raw == mark + rest
+    assert elements[2].text == mark + rest  # the character is kept, not removed
     assert [finding.code for finding in findings] == ["UNCLASSIFIED_LINE"]
     assert findings[0].element_ids == ("e0003",)
     assert elements[3].kind == "paragraph"
     assert elements[3].locator.page == 8  # the hidden marker did not change the page
     assert elements[3].locator.section_path == ("3",)  # nor the section
+
+
+def test_a_hiding_character_is_found_behind_the_indent(parse):
+    line = "  \N{ZERO WIDTH SPACE}본문이다.  "
+    elements, findings = parse("[PAGE 8]\n" + line)
+    assert elements[1].kind == "unclassified"
+    assert elements[1].raw == line
+    assert elements[1].text == "\N{ZERO WIDTH SPACE}본문이다."
+    assert [finding.code for finding in findings] == ["UNCLASSIFIED_LINE"]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "### \N{ZERO WIDTH SPACE}3.1 조회",
+        "### 3\N{ZERO WIDTH SPACE}.1 조회",
+        "### 3.\N{ZERO WIDTH SPACE}1 조회",
+        "### 3.1\N{ZERO WIDTH SPACE} 조회",
+        "### **\N{ZERO WIDTH SPACE}3.1** 조회",
+        "### 3.1 \N{ZERO WIDTH SPACE}",
+        "## \N{HANGUL FILLER}",
+        "## \N{ZERO WIDTH SPACE}주의 사항",
+    ],
+)
+def test_a_heading_that_a_hiding_character_changes_is_unclassified(parse, line):
+    elements, findings = parse("[PAGE 8]\n## 3. 제조\n" + line + "\n문단이다.")
+    assert elements[2].kind == "unclassified"
+    assert elements[2].raw == line
+    assert elements[2].text == line
+    assert [finding.code for finding in findings] == ["UNCLASSIFIED_LINE"]
+    assert findings[0].element_ids == ("e0003",)
+    assert elements[3].locator.section_path == ("3",)  # the section did not change
+
+
+@pytest.mark.parametrize(
+    "line, number, title",
+    [
+        ("### 3.1 " + SAN_XUAT, "3.1", SAN_XUAT),
+        ("## " + SAN_XUAT, None, SAN_XUAT),
+        ("### 3.1 조\N{ZERO WIDTH SPACE}회", "3.1", "조\N{ZERO WIDTH SPACE}회"),
+        ("### 3.1\t조회", "3.1", "조회"),
+    ],
+)
+def test_a_hiding_character_away_from_the_number_leaves_the_heading_alone(
+    parse, line, number, title
+):
+    elements, findings = parse("[PAGE 1]\n" + line)
+    heading = elements[1]
+    assert heading.kind == "heading"
+    assert (heading.number, heading.title) == (number, title)
+    assert findings == ()
+
+
+def test_combining_marks_inside_a_line_are_ordinary_text(parse):
+    line = SAN_XUAT + " theo quy tri\N{COMBINING GRAVE ACCENT}nh."
+    elements, findings = parse("[PAGE 1]\n" + line)
+    assert elements[1].kind == "paragraph"
+    assert elements[1].text == line
+    assert findings == ()
 
 
 def test_one_line_is_one_paragraph(parse):

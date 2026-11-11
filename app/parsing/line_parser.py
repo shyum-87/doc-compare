@@ -27,12 +27,45 @@ _HEADING_RE = re.compile(r"(#{1,6}) +(\S.*)")
 _HEADING_NUMBER_RE = re.compile(r"([0-9]+(?:\.[0-9]+)*)\.?\s+(\S.*)")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
-_INVISIBLE = ("Cc", "Cf")  # Unicode categories: control and format characters
+# characters that show nothing of their own: control and format characters, combining
+# marks, and letters that are drawn blank
+_HIDING_CATEGORIES = ("Cc", "Cf", "Mn", "Me")
+_BLANK_LETTERS = frozenset(
+    "\N{HANGUL CHOSEONG FILLER}\N{HANGUL JUNGSEONG FILLER}\N{HANGUL FILLER}"
+    "\N{HALFWIDTH HANGUL FILLER}\N{BRAILLE PATTERN BLANK}"
+)
 
 
 def clean_text(value: str) -> str:
     """Strip paired ** and turn <br> into newlines. Characters are never changed."""
     return _BR_RE.sub("\n", _BOLD_RE.sub(r"\1", value))
+
+
+def _hides(char: str) -> bool:
+    """True for a character that shows nothing of its own and so can hide a marker."""
+    if char.isspace():
+        return False
+    return unicodedata.category(char) in _HIDING_CATEGORIES or char in _BLANK_LETTERS
+
+
+def _squeezed(line: str) -> str:
+    """The line without what a reader does not see: hiding characters, '*' and spaces."""
+    return "".join(char for char in line if not (_hides(char) or char == "*" or char.isspace()))
+
+
+def _split_heading(rest: str) -> tuple[Optional[str], str]:
+    """'3.1 **A**<br>B' -> ('3.1', 'A\nB'). The number is read with the bold marks stripped."""
+    plain = _BOLD_RE.sub(r"\1", rest)
+    match = _HEADING_NUMBER_RE.fullmatch(plain)
+    if match:
+        return match.group(1), _BR_RE.sub("\n", match.group(2))
+    return None, _BR_RE.sub("\n", plain)
+
+
+def _reads_plainly(rest: str) -> bool:
+    """False when a hiding character opens the heading or changes the number read from it."""
+    seen = "".join(char for char in rest if not _hides(char))
+    return not _hides(rest[0]) and _split_heading(rest)[0] == _split_heading(seen)[0]
 
 
 class _Builder:
@@ -98,9 +131,7 @@ class _Builder:
             self.flag("PAGE_NUMBER_NOT_INCREASING", element)
 
     def heading(self, level: int, rest: str, line_no: int, raw: str) -> None:
-        match = _HEADING_NUMBER_RE.fullmatch(_BOLD_RE.sub(r"\1", rest))
-        number = match.group(1) if match else None
-        title = clean_text(match.group(2) if match else rest)
+        number, title = _split_heading(rest)
         while self.headings and self.headings[-1][0] >= level:
             self.headings.pop()
         parent_number = self.headings[-1][2] if self.headings else None
@@ -160,14 +191,15 @@ def parse_lines(
         if not stripped:
             continue
 
-        # a line that starts with an invisible character is not interpreted:
+        # a line that starts with a hiding character is not interpreted:
         # the character would hide a marker from every rule below
-        if unicodedata.category(stripped[0]) in _INVISIBLE:
+        if _hides(stripped[0]):
             builder.unclassified(stripped, line_no, raw)
             continue
 
-        # 2. page marker
-        if stripped.upper().startswith("[PAGE"):
+        # 2. page marker. '[PAGE' is reserved: a line that holds it, however it is
+        # wrapped or broken up, is a marker and nothing else, or it is not interpreted
+        if "[PAGE" in _squeezed(stripped).upper():
             match = _PAGE_RE.fullmatch(stripped)
             if match:
                 builder.page_marker(int(match.group(1)), line_no, raw)
@@ -178,7 +210,7 @@ def parse_lines(
         # 3. heading
         if stripped.startswith("#"):
             match = _HEADING_RE.fullmatch(stripped)
-            if match:
+            if match and _reads_plainly(match.group(2)):
                 builder.heading(len(match.group(1)), match.group(2), line_no, raw)
             else:
                 builder.unclassified(stripped, line_no, raw)

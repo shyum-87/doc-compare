@@ -13,16 +13,17 @@ from typing import Optional
 from app.models.document import Language
 
 _PLAIN_DOT = re.compile(r"[0-9]+(?:\.[0-9]+)?")
-_GROUPED_DOT = re.compile(r"[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?")
+_GROUPED_DOT = re.compile(r"[1-9][0-9]{0,2}(?:,[0-9]{3})+(?:\.[0-9]+)?")
 _PLAIN_COMMA = re.compile(r"[0-9]+(?:,[0-9]+)?")
-_GROUPED_COMMA = re.compile(r"[0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]+)?")
+_GROUPED_COMMA = re.compile(r"[1-9][0-9]{0,2}(?:\.[0-9]{3})+(?:,[0-9]+)?")
 
 
 def parse_number(raw: str, language: Language) -> Optional[Decimal]:
     """Value of `raw` in the notation of `language`, or None if it does not fit.
 
     ko/en/zh: '.' decimal, ',' thousands. vi: ',' decimal, '.' thousands.
-    A thousands separator counts only when exactly three digits follow it.
+    A thousands separator counts only when exactly three digits follow it. A grouped
+    number starts with one to three digits, and the first of them is not 0.
     """
     if language == "vi":
         if _PLAIN_COMMA.fullmatch(raw):

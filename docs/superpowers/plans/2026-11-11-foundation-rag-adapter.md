@@ -72,6 +72,8 @@
 **파서**
 
 - 페이지 마커 자신의 `section_path`는 바로 앞 헤딩까지의 경로다.
+- 앞뒤 공백을 뗀 줄이 보이지 않는 문자(유니코드 범주 Cc·Cf: BOM, 폭 없는 공백, 방향 표시, 제어 문자)로 시작하면 어떤 규칙으로도 해석하지 않고 미분류로 둔다. 그런 문자는 `[PAGE 9]`나 `### 3.1`을 규칙에서 가려 쪽과 절 위치를 소리 없이 틀리게 만든다. 문자를 지우고 해석하지 않는다(추측하지 않는다).
+- 페이지 번호와 조항 번호는 ASCII 숫자(`0`~`9`)만 인정한다. 페이지 번호는 6자리까지다. 조항 번호는 `**`를 벗긴 제목에서 읽는다(`## **3. 제조**`의 번호는 `3`).
 - 규칙 8(미분류) 중 코드 펜스(` ``` `, `~~~`), `>` 인용, 구분선(`---`, `***`, `___`), HTML 태그 줄은 규칙 6(목록 항목)보다 먼저 검사한다. 그러지 않으면 `---`와 `***`가 목록 항목으로 읽힌다.
 - 표 발견 항목의 줄 번호는 어긋난 그 행의 줄이다.
 - 페이지 마커가 하나 있고 다른 줄이 있으면 정상 문서다. 빈 줄뿐인 파일만 `EMPTY_DOCUMENT`다.
@@ -1138,7 +1140,7 @@ git push -u origin main
 
 ### Task 5: 파서 — 빈 줄, 페이지 마커, 헤딩, 문단
 
-설계 §5의 규칙 1, 2, 3, 7과 §4.3, §5.3. 형식이 어긋난 `[PAGE x]`와 공백 없는 `##제목`은 미분류로 둔다(규칙 8의 일부). 표, 이미지, 목록은 다음 Task들에서 넣는다. 이 Task가 끝난 시점에는 그런 줄이 문단으로 읽힌다.
+설계 §5의 규칙 1, 2, 3, 7과 §4.3, §5.3. 형식이 어긋난 `[PAGE x]`와 공백 없는 `##제목`, 보이지 않는 문자로 시작하는 줄은 미분류로 둔다(규칙 8의 일부). 페이지 번호와 조항 번호는 ASCII 숫자만 인정하고, 조항 번호는 `**`를 벗긴 제목에서 읽는다. 표, 이미지, 목록은 다음 Task들에서 넣는다. 이 Task가 끝난 시점에는 그런 줄이 문단으로 읽힌다.
 
 **Files:**
 - Create: `app/parsing/line_parser.py`
@@ -1229,6 +1231,7 @@ def test_page_marker(parse, line, page):
     assert elements[0].page == page
     assert elements[0].locator.page == page
     assert elements[0].raw == line
+    assert elements[0].text == line.strip()
     assert findings == ()
 
 
@@ -1237,16 +1240,35 @@ def test_a_page_marker_sets_the_page_of_what_follows(parse):
     assert [element.locator.page for element in elements] == [8, 8, 9, 9]
 
 
-@pytest.mark.parametrize("line", ["[PAGE x]", "[PAGE 8] 본문", "[page 8]", "[PAGE  8]", "[PAGE 8"])
+@pytest.mark.parametrize(
+    "line",
+    [
+        "[PAGE x]",
+        "[PAGE 8] 본문",
+        "[page 8]",
+        "[PAGE  8]",
+        "[PAGE 8",
+        "  [PAGE x] ",
+        "[PAGE 1234567]",
+        "[PAGE \N{ARABIC-INDIC DIGIT THREE}]",
+    ],
+)
 def test_a_malformed_page_marker_is_unclassified(parse, line):
     elements, findings = parse("[PAGE 1]\n" + line)
     assert elements[1].kind == "unclassified"
-    assert elements[1].text == line
+    assert elements[1].raw == line
+    assert elements[1].text == line.strip()
     assert elements[1].locator.page == 1  # it did not change the page
     assert [finding.code for finding in findings] == ["UNCLASSIFIED_LINE"]
     assert findings[0].grade == "review_required"
     assert findings[0].element_ids == ("e0002",)
     assert (findings[0].line_start, findings[0].line_end) == (2, 2)
+
+
+def test_a_page_number_of_any_length_cannot_stop_the_parser(parse):
+    elements, findings = parse("[PAGE 1]\n[PAGE " + "9" * 5000 + "]")
+    assert elements[1].kind == "unclassified"
+    assert [finding.code for finding in findings] == ["UNCLASSIFIED_LINE"]
 
 
 @pytest.mark.parametrize(
@@ -1265,6 +1287,28 @@ def test_heading(parse, line, level, number, title):
     assert heading.kind == "heading"
     assert (heading.level, heading.number, heading.title) == (level, number, title)
     assert heading.text == line.lstrip("# ")
+    assert findings == ()
+
+
+@pytest.mark.parametrize(
+    "line, number, title, text",
+    [
+        ("## **3. 제조**", "3", "제조", "3. 제조"),
+        ("## **3.** 제조", "3", "제조", "3. 제조"),
+        ("### 3.1 **배합** 전<br>조회", "3.1", "배합 전\n조회", "3.1 배합 전\n조회"),
+        ("## **주의** 사항", None, "주의 사항", "주의 사항"),
+        ("## \N{FULLWIDTH DIGIT THREE}. 제조", None, None, None),
+    ],
+)
+def test_a_heading_is_read_without_its_bold_marks(parse, line, number, title, text):
+    if title is None:  # only ASCII digits make a clause number: the whole heading is the title
+        title = text = line[3:]
+    elements, findings = parse("[PAGE 1]\n" + line)
+    heading = elements[1]
+    assert heading.kind == "heading"
+    assert heading.raw == line
+    assert (heading.number, heading.title, heading.text) == (number, title, text)
+    assert heading.locator.section_path == (number if number is not None else title,)
     assert findings == ()
 
 
@@ -1302,6 +1346,27 @@ def test_a_malformed_heading_is_unclassified(parse, line):
     assert elements[3].locator.section_path == ("1",)  # the section did not change
 
 
+@pytest.mark.parametrize(
+    "mark",
+    [
+        "\N{ZERO WIDTH NO-BREAK SPACE}",
+        "\N{ZERO WIDTH SPACE}",
+        "\N{LEFT-TO-RIGHT MARK}",
+        "\x00",
+    ],
+)
+@pytest.mark.parametrize("rest", ["[PAGE 9]", "### 3.1 조회", "본문이다."])
+def test_a_line_that_starts_with_an_invisible_character_is_not_interpreted(parse, mark, rest):
+    elements, findings = parse("[PAGE 8]\n## 3. 제조\n" + mark + rest + "\n문단이다.")
+    assert elements[2].kind == "unclassified"
+    assert elements[2].raw == mark + rest
+    assert [finding.code for finding in findings] == ["UNCLASSIFIED_LINE"]
+    assert findings[0].element_ids == ("e0003",)
+    assert elements[3].kind == "paragraph"
+    assert elements[3].locator.page == 8  # the hidden marker did not change the page
+    assert elements[3].locator.section_path == ("3",)  # nor the section
+
+
 def test_one_line_is_one_paragraph(parse):
     elements, _ = parse("[PAGE 1]\n첫 줄이다.\n둘째 줄이다.")
     assert [element.kind for element in elements[1:]] == ["paragraph", "paragraph"]
@@ -1329,6 +1394,7 @@ def test_typos_are_kept(parse):
         ("**가** 와 **나**", "가 와 나"),
         ("가<br>나", "가\n나"),
         ("가<BR/>나<br />다", "가\n나\n다"),
+        ("**가<br>나**", "가\n나"),
         ("짝이 없는 ** 표시", "짝이 없는 ** 표시"),
         ("2 * 3", "2 * 3"),
     ],
@@ -1363,6 +1429,7 @@ lines that look structural but fit no rule become `unclassified` elements with a
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Optional
 
 from app.models.document import (
@@ -1377,16 +1444,17 @@ from app.models.document import (
 )
 from app.models.findings import Finding, FindingCode, new_finding
 
-_PAGE_RE = re.compile(r"\[PAGE ?(\d+)\]")
+_PAGE_RE = re.compile(r"\[PAGE ?([0-9]{1,6})\]")
 _HEADING_RE = re.compile(r"(#{1,6}) +(\S.*)")
-_HEADING_NUMBER_RE = re.compile(r"(\d+(?:\.\d+)*)\.?\s+(\S.*)")
+_HEADING_NUMBER_RE = re.compile(r"([0-9]+(?:\.[0-9]+)*)\.?\s+(\S.*)")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_INVISIBLE = ("Cc", "Cf")  # Unicode categories: control and format characters
 
 
 def clean_text(value: str) -> str:
     """Strip paired ** and turn <br> into newlines. Characters are never changed."""
-    return _BOLD_RE.sub(r"\1", _BR_RE.sub("\n", value))
+    return _BR_RE.sub("\n", _BOLD_RE.sub(r"\1", value))
 
 
 class _Builder:
@@ -1435,7 +1503,7 @@ class _Builder:
         )
 
     def heading(self, level: int, rest: str, line_no: int, raw: str) -> None:
-        match = _HEADING_NUMBER_RE.fullmatch(rest)
+        match = _HEADING_NUMBER_RE.fullmatch(_BOLD_RE.sub(r"\1", rest))
         number = match.group(1) if match else None
         title = clean_text(match.group(2) if match else rest)
         while self.headings and self.headings[-1][0] >= level:
@@ -1490,6 +1558,12 @@ def parse_lines(
         if not stripped:
             continue
 
+        # a line that starts with an invisible character is not interpreted:
+        # the character would hide a marker from every rule below
+        if unicodedata.category(stripped[0]) in _INVISIBLE:
+            builder.unclassified(stripped, line_no, raw)
+            continue
+
         # 2. page marker
         if stripped.upper().startswith("[PAGE"):
             match = _PAGE_RE.fullmatch(stripped)
@@ -1520,7 +1594,7 @@ def parse_lines(
 
 Run: `.venv/Scripts/python -m pytest tests/parsing/test_parser_basics.py -q`
 
-Expected: 마지막 줄이 `31 passed`
+Expected: 마지막 줄이 `53 passed`
 
 - [ ] **Step 6: 전체 검사를 돌린다**
 
@@ -1530,7 +1604,7 @@ Expected: 마지막 줄이 `31 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `103 passed`, `All checks passed!`, `12 files already formatted`
+Expected: 차례로 `125 passed`, `All checks passed!`, `12 files already formatted`
 
 - [ ] **Step 7: 커밋한다**
 
@@ -1673,6 +1747,7 @@ lines that look structural but fit no rule become `unclassified` elements with a
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Optional
 
 from app.models.document import (
@@ -1687,16 +1762,17 @@ from app.models.document import (
 )
 from app.models.findings import Finding, FindingCode, new_finding
 
-_PAGE_RE = re.compile(r"\[PAGE ?(\d+)\]")
+_PAGE_RE = re.compile(r"\[PAGE ?([0-9]{1,6})\]")
 _HEADING_RE = re.compile(r"(#{1,6}) +(\S.*)")
-_HEADING_NUMBER_RE = re.compile(r"(\d+(?:\.\d+)*)\.?\s+(\S.*)")
+_HEADING_NUMBER_RE = re.compile(r"([0-9]+(?:\.[0-9]+)*)\.?\s+(\S.*)")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_INVISIBLE = ("Cc", "Cf")  # Unicode categories: control and format characters
 
 
 def clean_text(value: str) -> str:
     """Strip paired ** and turn <br> into newlines. Characters are never changed."""
-    return _BOLD_RE.sub(r"\1", _BR_RE.sub("\n", value))
+    return _BR_RE.sub("\n", _BOLD_RE.sub(r"\1", value))
 
 
 class _Builder:
@@ -1762,7 +1838,7 @@ class _Builder:
             self.flag("PAGE_NUMBER_NOT_INCREASING", element)
 
     def heading(self, level: int, rest: str, line_no: int, raw: str) -> None:
-        match = _HEADING_NUMBER_RE.fullmatch(rest)
+        match = _HEADING_NUMBER_RE.fullmatch(_BOLD_RE.sub(r"\1", rest))
         number = match.group(1) if match else None
         title = clean_text(match.group(2) if match else rest)
         while self.headings and self.headings[-1][0] >= level:
@@ -1824,6 +1900,12 @@ def parse_lines(
         if not stripped:
             continue
 
+        # a line that starts with an invisible character is not interpreted:
+        # the character would hide a marker from every rule below
+        if unicodedata.category(stripped[0]) in _INVISIBLE:
+            builder.unclassified(stripped, line_no, raw)
+            continue
+
         # 2. page marker
         if stripped.upper().startswith("[PAGE"):
             match = _PAGE_RE.fullmatch(stripped)
@@ -1864,7 +1946,7 @@ Expected: 마지막 줄이 `9 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `112 passed`, `All checks passed!`, `13 files already formatted`
+Expected: 차례로 `134 passed`, `All checks passed!`, `13 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -2052,6 +2134,7 @@ lines that look structural but fit no rule become `unclassified` elements with a
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Optional
 
 from app.models.document import (
@@ -2068,18 +2151,19 @@ from app.models.document import (
 )
 from app.models.findings import Finding, FindingCode, new_finding
 
-_PAGE_RE = re.compile(r"\[PAGE ?(\d+)\]")
+_PAGE_RE = re.compile(r"\[PAGE ?([0-9]{1,6})\]")
 _HEADING_RE = re.compile(r"(#{1,6}) +(\S.*)")
-_HEADING_NUMBER_RE = re.compile(r"(\d+(?:\.\d+)*)\.?\s+(\S.*)")
+_HEADING_NUMBER_RE = re.compile(r"([0-9]+(?:\.[0-9]+)*)\.?\s+(\S.*)")
 _SEPARATOR_CELL_RE = re.compile(r":?-+:?")
 _CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_INVISIBLE = ("Cc", "Cf")  # Unicode categories: control and format characters
 
 
 def clean_text(value: str) -> str:
     """Strip paired ** and turn <br> into newlines. Characters are never changed."""
-    return _BOLD_RE.sub(r"\1", _BR_RE.sub("\n", value))
+    return _BR_RE.sub("\n", _BOLD_RE.sub(r"\1", value))
 
 
 def split_table_row(line: str) -> list[str]:
@@ -2164,7 +2248,7 @@ class _Builder:
             self.flag("PAGE_NUMBER_NOT_INCREASING", element)
 
     def heading(self, level: int, rest: str, line_no: int, raw: str) -> None:
-        match = _HEADING_NUMBER_RE.fullmatch(rest)
+        match = _HEADING_NUMBER_RE.fullmatch(_BOLD_RE.sub(r"\1", rest))
         number = match.group(1) if match else None
         title = clean_text(match.group(2) if match else rest)
         while self.headings and self.headings[-1][0] >= level:
@@ -2249,6 +2333,12 @@ def parse_lines(
         if not stripped:
             continue
 
+        # a line that starts with an invisible character is not interpreted:
+        # the character would hide a marker from every rule below
+        if unicodedata.category(stripped[0]) in _INVISIBLE:
+            builder.unclassified(stripped, line_no, raw)
+            continue
+
         # 2. page marker
         if stripped.upper().startswith("[PAGE"):
             match = _PAGE_RE.fullmatch(stripped)
@@ -2302,7 +2392,7 @@ Expected: 마지막 줄이 `16 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `128 passed`, `All checks passed!`, `14 files already formatted`
+Expected: 차례로 `150 passed`, `All checks passed!`, `14 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -2498,6 +2588,7 @@ lines that look structural but fit no rule become `unclassified` elements with a
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Optional
 
 from app.models.document import (
@@ -2516,9 +2607,9 @@ from app.models.document import (
 )
 from app.models.findings import Finding, FindingCode, new_finding
 
-_PAGE_RE = re.compile(r"\[PAGE ?(\d+)\]")
+_PAGE_RE = re.compile(r"\[PAGE ?([0-9]{1,6})\]")
 _HEADING_RE = re.compile(r"(#{1,6}) +(\S.*)")
-_HEADING_NUMBER_RE = re.compile(r"(\d+(?:\.\d+)*)\.?\s+(\S.*)")
+_HEADING_NUMBER_RE = re.compile(r"([0-9]+(?:\.[0-9]+)*)\.?\s+(\S.*)")
 _SEPARATOR_CELL_RE = re.compile(r":?-+:?")
 _CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
 _IMAGE_ANGLE_RE = re.compile(r'!\[([^\]]*)\]\(<([^">]+?)(?:\s+"([^"]*)")?\s*>\)')
@@ -2530,11 +2621,12 @@ _RULE_LINE_RE = re.compile(r"(?:-{3,}|\*{3,}|_{3,})")
 _HTML_LINE_RE = re.compile(r"</?[A-Za-z][^>]*>")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_INVISIBLE = ("Cc", "Cf")  # Unicode categories: control and format characters
 
 
 def clean_text(value: str) -> str:
     """Strip paired ** and turn <br> into newlines. Characters are never changed."""
-    return _BOLD_RE.sub(r"\1", _BR_RE.sub("\n", value))
+    return _BR_RE.sub("\n", _BOLD_RE.sub(r"\1", value))
 
 
 def split_table_row(line: str) -> list[str]:
@@ -2619,7 +2711,7 @@ class _Builder:
             self.flag("PAGE_NUMBER_NOT_INCREASING", element)
 
     def heading(self, level: int, rest: str, line_no: int, raw: str) -> None:
-        match = _HEADING_NUMBER_RE.fullmatch(rest)
+        match = _HEADING_NUMBER_RE.fullmatch(_BOLD_RE.sub(r"\1", rest))
         number = match.group(1) if match else None
         title = clean_text(match.group(2) if match else rest)
         while self.headings and self.headings[-1][0] >= level:
@@ -2729,6 +2821,12 @@ def parse_lines(
         if not stripped:
             continue
 
+        # a line that starts with an invisible character is not interpreted:
+        # the character would hide a marker from every rule below
+        if unicodedata.category(stripped[0]) in _INVISIBLE:
+            builder.unclassified(stripped, line_no, raw)
+            continue
+
         # 2. page marker
         if stripped.upper().startswith("[PAGE"):
             match = _PAGE_RE.fullmatch(stripped)
@@ -2821,7 +2919,7 @@ Expected: 마지막 줄이 `39 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `167 passed`, `All checks passed!`, `15 files already formatted`
+Expected: 차례로 `189 passed`, `All checks passed!`, `15 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -2985,6 +3083,7 @@ lines that look structural but fit no rule become `unclassified` elements with a
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Optional
 
 from app.models.document import (
@@ -3003,9 +3102,9 @@ from app.models.document import (
 )
 from app.models.findings import Finding, FindingCode, new_finding
 
-_PAGE_RE = re.compile(r"\[PAGE ?(\d+)\]")
+_PAGE_RE = re.compile(r"\[PAGE ?([0-9]{1,6})\]")
 _HEADING_RE = re.compile(r"(#{1,6}) +(\S.*)")
-_HEADING_NUMBER_RE = re.compile(r"(\d+(?:\.\d+)*)\.?\s+(\S.*)")
+_HEADING_NUMBER_RE = re.compile(r"([0-9]+(?:\.[0-9]+)*)\.?\s+(\S.*)")
 _SEPARATOR_CELL_RE = re.compile(r":?-+:?")
 _CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
 _IMAGE_ANGLE_RE = re.compile(r'!\[([^\]]*)\]\(<([^">]+?)(?:\s+"([^"]*)")?\s*>\)')
@@ -3017,6 +3116,7 @@ _RULE_LINE_RE = re.compile(r"(?:-{3,}|\*{3,}|_{3,})")
 _HTML_LINE_RE = re.compile(r"</?[A-Za-z][^>]*>")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_INVISIBLE = ("Cc", "Cf")  # Unicode categories: control and format characters
 
 
 class LineCoverageError(Exception):
@@ -3025,7 +3125,7 @@ class LineCoverageError(Exception):
 
 def clean_text(value: str) -> str:
     """Strip paired ** and turn <br> into newlines. Characters are never changed."""
-    return _BOLD_RE.sub(r"\1", _BR_RE.sub("\n", value))
+    return _BR_RE.sub("\n", _BOLD_RE.sub(r"\1", value))
 
 
 def split_table_row(line: str) -> list[str]:
@@ -3110,7 +3210,7 @@ class _Builder:
             self.flag("PAGE_NUMBER_NOT_INCREASING", element)
 
     def heading(self, level: int, rest: str, line_no: int, raw: str) -> None:
-        match = _HEADING_NUMBER_RE.fullmatch(rest)
+        match = _HEADING_NUMBER_RE.fullmatch(_BOLD_RE.sub(r"\1", rest))
         number = match.group(1) if match else None
         title = clean_text(match.group(2) if match else rest)
         while self.headings and self.headings[-1][0] >= level:
@@ -3220,6 +3320,12 @@ def parse_lines(
         if not stripped:
             continue
 
+        # a line that starts with an invisible character is not interpreted:
+        # the character would hide a marker from every rule below
+        if unicodedata.category(stripped[0]) in _INVISIBLE:
+            builder.unclassified(stripped, line_no, raw)
+            continue
+
         # 2. page marker
         if stripped.upper().startswith("[PAGE"):
             match = _PAGE_RE.fullmatch(stripped)
@@ -3326,7 +3432,7 @@ Expected: 마지막 줄이 `7 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `174 passed`, `All checks passed!`, `17 files already formatted`
+Expected: 차례로 `196 passed`, `All checks passed!`, `17 files already formatted`
 
 - [ ] **Step 7: 커밋한다**
 
@@ -3481,7 +3587,7 @@ Expected: 마지막 줄이 `11 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `185 passed`, `All checks passed!`, `18 files already formatted`
+Expected: 차례로 `207 passed`, `All checks passed!`, `18 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -3653,7 +3759,7 @@ Expected: 마지막 줄이 `30 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `215 passed`, `All checks passed!`, `20 files already formatted`
+Expected: 차례로 `237 passed`, `All checks passed!`, `20 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -3978,7 +4084,7 @@ Expected: 마지막 줄이 `57 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `272 passed`, `All checks passed!`, `21 files already formatted`
+Expected: 차례로 `294 passed`, `All checks passed!`, `21 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -4347,7 +4453,7 @@ Expected: 마지막 줄이 `15 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `287 passed`, `All checks passed!`, `22 files already formatted`
+Expected: 차례로 `309 passed`, `All checks passed!`, `22 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -4951,7 +5057,7 @@ Expected: 마지막 줄이 `22 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `309 passed`, `All checks passed!`, `24 files already formatted`
+Expected: 차례로 `331 passed`, `All checks passed!`, `24 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5170,7 +5276,7 @@ Expected: 마지막 줄이 `24 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `333 passed`, `All checks passed!`, `25 files already formatted`
+Expected: 차례로 `355 passed`, `All checks passed!`, `25 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -5395,7 +5501,7 @@ Expected: 마지막 줄이 `23 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `356 passed`, `All checks passed!`, `27 files already formatted`
+Expected: 차례로 `378 passed`, `All checks passed!`, `27 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5858,7 +5964,7 @@ Expected: 마지막 줄이 `33 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `389 passed`, `All checks passed!`, `29 files already formatted`
+Expected: 차례로 `411 passed`, `All checks passed!`, `29 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6204,7 +6310,7 @@ Expected: 종료 코드 0, 출력은 아래와 같다.
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `407 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `429 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 11: 커밋한다**
 
@@ -6381,7 +6487,7 @@ python -m venv .venv
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `407 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `429 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 5: 설계의 완료 기준을 하나씩 확인한다**
 

@@ -101,10 +101,11 @@ def test_a_korean_baseline_document_takes_no_source(ko_sample, source_samples):
 
 
 @pytest.mark.parametrize("language", ["ja", "KO", "", None])
-def test_an_unknown_original_language_is_refused(ko_sample, language):
-    # a mistake of the caller, like a source file for a Korean document: no result at all
-    with pytest.raises(ValueError):
-        _ingest(ko_sample, language)
+def test_an_unknown_original_language_is_refused(tmp_path, language):
+    # a mistake of the caller, like a source file for a Korean document: no result at all,
+    # and it is refused before the file is looked at (this one does not exist)
+    with pytest.raises(ValueError, match="the original language is not one of ko, vi, en, zh"):
+        _ingest(tmp_path / "missing.md", language)
 
 
 def test_a_changed_number_in_the_translation_needs_review(tmp_path, ko_sample, source_samples):
@@ -179,7 +180,9 @@ def test_a_broken_source_file_fails_the_whole_result(tmp_path, ko_sample, data, 
     if data is not None:
         source.write_bytes(data)
     # the Korean file is fine, but the result must not look like a normal one
-    _assert_failed(_ingest(ko_sample, "vi", source), reason, "source")
+    result = _ingest(ko_sample, "vi", source)
+    _assert_failed(result, reason, "source")
+    assert result.original_language == "vi"
 
 
 def test_a_file_without_page_markers_needs_review(tmp_path):
@@ -273,7 +276,9 @@ def test_a_lost_line_in_the_source_file_fails_closed(monkeypatch, ko_sample, sou
         return (elements[:-1] if variant == "source" else elements), findings
 
     monkeypatch.setattr(ingest_module, "parse_lines", drop_one_in_the_source)
-    _assert_failed(_ingest(ko_sample, "vi", source_samples["vi"]), "INTERNAL_ERROR", None)
+    result = _ingest(ko_sample, "vi", source_samples["vi"])
+    _assert_failed(result, "INTERNAL_ERROR", None)
+    assert result.original_language == "vi"
 
 
 class _Unforeseen(Exception):

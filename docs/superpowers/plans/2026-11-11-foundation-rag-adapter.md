@@ -8331,7 +8331,7 @@ python -m venv .venv
 
 `--original-language`에는 원문 언어에 맞춰 `vi`, `en`, `zh`, `ko` 중 하나를 준다. 경로나 문서 ID에 공백이 있으면 따옴표로 감싼다.
 
-프로그램은 어느 파일이 번역본이고 어느 파일이 원문인지, `--original-language`가 맞는지 확인하지 않는다. 두 파일을 바꿔 넣거나 언어를 틀리게 주어도 `OK`가 나올 수 있다. 실행하기 전에 주 파일이 한국어 `rag_ko.md`이고 `--source`가 번역 전 `rag.md`인지, 언어가 맞는지 직접 확인한다.
+프로그램은 어느 파일이 번역본이고 어느 파일이 원문인지, `--original-language`가 맞는지 확인하지 않는다. 두 파일을 바꿔 넣거나 언어를 틀리게 주어도 `OK`가 나올 수 있다. 실행하기 전에 주 파일이 한국어 `rag_ko.md`이고 `--source`가 번역 전 `rag.md`인지, 언어가 맞는지 직접 확인한다. 한국어 기준 문서로 넣는 파일이 실제로 한국어 문서인지도 확인한다.
 
 실제 파일은 이 저장소 폴더 밖에 두고 경로로 가리킨다. `.gitignore`는 `.md` 파일을 걸러 주지 않으므로, 저장소 폴더 안에 두면 커밋에 섞일 수 있다.
 
@@ -8502,7 +8502,7 @@ Task 19까지 마친 뒤 구현 전체를 한 번 더 검토하고 아래를 고
 **테스트**
 
 - `tests/models/test_findings.py`: 테스트 3개를 더했다(원문 언어는 항상 있어야 한다, JSON으로 오가도 남는다, `source` 문서의 언어와 같아야 한다). 51개가 됐다.
-- `tests/parsing/test_ingest.py`: 결과마다 `original_language`를 확인하고, 알 수 없는 원문 언어 4가지가 `ValueError`인지 확인한다. 구조가 깨진 입력 4가지는 `REVIEW_REQUIRED`라고 정확히 확인하도록 조였다(전에는 `OK`만 아니면 통과했다). 46개가 됐다.
+- `tests/parsing/test_ingest.py`: 결과마다 `original_language`를 확인하고, 알 수 없는 원문 언어 4가지가 파일을 읽기 전에 `ValueError`로 거부되는지 확인한다. 구조가 깨진 입력 4가지는 `REVIEW_REQUIRED`라고 정확히 확인하도록 조였다(전에는 `OK`만 아니면 통과했다). 46개가 됐다.
 - 전체는 `956 passed`다. Task 19 Step 5의 명령은 `126 passed`다.
 
 **문서**

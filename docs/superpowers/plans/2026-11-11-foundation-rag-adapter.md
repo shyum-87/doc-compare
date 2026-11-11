@@ -8278,7 +8278,7 @@ git push -u origin main
 
 테스트는 가상 샘플만 쓴다. 실제 변환 산출물의 표기와 "원문과 번역본이 요소 단위로 1:1 대응한다"([D-008](DECISIONS.md))는 가정은 사내에서만 확인할 수 있다. 이 문서는 사내에서 무엇을 실행하고 무엇을 가지고 나오는지 적는다.
 
-이 저장소는 공개 저장소다. 가지고 나오는 것은 설치된 패키지의 이름과 버전(1절), 실패한 테스트의 이름과 오류 종류(2절), 4절에 적은 개수와 코드, 5절 질문의 짧은 답뿐이다. **문서 본문, 문서에 적힌 숫자와 설비·문서 번호 같은 토큰 값, 결과 JSON, 파일 이름, 폴더 경로, 문서 ID, 사용자 ID, 사내 주소는 가지고 나오지 않는다.** 사내 반출 규정이 이 문서보다 엄격하면 그 규정을 따른다.
+이 저장소는 공개 저장소다. 가지고 나오는 것은 1절에 적은 Python 버전과 설치 사실, 설치된 패키지의 이름과 버전, 실패한 테스트의 이름과 오류 종류(2절), 3절과 4절에 적은 개수·코드·오류 종류, 5절 질문의 짧은 답뿐이다. **문서 본문, 문서에 적힌 숫자와 설비·문서 번호 같은 토큰 값, 결과 JSON, 파일 이름, 폴더 경로, 문서 ID, 사용자 ID, 사내 주소는 가지고 나오지 않는다.** 사내 반출 규정이 이 문서보다 엄격하면 그 규정을 따른다.
 
 ## 1. 준비
 
@@ -8309,7 +8309,7 @@ python -m venv .venv
 .venv/Scripts/python -m ruff check .
 ```
 
-둘 중 하나라도 실패하면 실제 파일을 넣기 전에 멈춘다. 실패한 테스트의 이름과 오류 종류(예: `ImportError`)를 적어 온다. 이 테스트는 가상 샘플만 쓰므로 테스트 이름과 오류 종류에는 사내 정보가 없다. Traceback에는 폴더 경로가 나오므로 옮기지 않는다.
+둘 중 하나라도 실패하면 실제 파일을 넣기 전에 멈춘다. 실패한 테스트의 이름과 오류 종류(예: `ImportError`)를 적어 온다. 이 테스트는 가상 샘플만 쓰므로 테스트 이름과 오류 종류에는 사내 정보가 없다. Traceback에는 폴더 경로가 나오므로 옮기지 않고, 오류 종류만 적는다.
 
 ## 3. 실제 파일로 실행
 
@@ -8345,7 +8345,7 @@ ERROR app.parsing.ingest: cannot read the translated file: NOT_UTF8
 ERROR app.parsing.ingest: internal error: KeyError at tokens.py:120
 ```
 
-파일을 읽지 못한 사유는 `FILE_UNREADABLE`, `NOT_UTF8`, `EMPTY_DOCUMENT` 중 하나다. `ERROR app.parsing:`으로 시작하는 줄은 명령줄 쪽의 오류다. `internal error: KeyError`처럼 위치 없이 오류 종류만 나오거나, `status:` 줄 뒤에 `cannot write the result file: PermissionError`처럼 결과 파일을 쓰지 못했다고 나온다.
+파일을 읽지 못한 사유는 `FILE_UNREADABLE`, `NOT_UTF8`, `EMPTY_DOCUMENT` 중 하나다. `ERROR app.parsing:`으로 시작하는 줄은 명령줄 쪽의 오류다. `internal error: KeyError`처럼 위치 없이 오류 종류만 나오거나, `status:` 줄이나 앞의 `ERROR` 줄 뒤에 `cannot write the result file: PermissionError`처럼 결과 파일을 쓰지 못했다고 나온다. 이 두 경우에는 결과 파일이 없다.
 
 종료 코드는 `OK` 0, `REVIEW_REQUIRED` 1, `FAILED` 2다. 사용법 오류이거나 결과 파일을 쓰지 못했을 때도 2다. 종료 코드는 실행 직후 `echo $?`(PowerShell에서는 `$LASTEXITCODE`)로 본다. `--out`에 입력 파일을 주면 사용법 오류다. 결과 JSON은 `out/` 아래에 두고 사내에서만 연다.
 

@@ -79,39 +79,39 @@ def _reads_plainly(rest: str) -> bool:
     return _split_heading(rest)[0] == _split_heading(shown)[0]
 
 
-def split_table_row(line: str) -> list[str]:
-    """'|a|b| ' -> ['a', 'b']. An escaped pipe (\\|) does not split."""
+def _cells_as_written(line: str) -> list[str]:
+    """'|a|**b**| ' -> ['a', '**b**']. An escaped pipe (\\|) does not split."""
     body = line.strip()
     if body.startswith("|"):
         body = body[1:]
     if body.endswith("|") and not body.endswith("\\|"):
         body = body[:-1]
-    return [clean_text(cell.strip().replace("\\|", "|")) for cell in _CELL_SPLIT_RE.split(body)]
+    return [cell.strip() for cell in _CELL_SPLIT_RE.split(body)]
+
+
+def split_table_row(line: str) -> list[str]:
+    """'|a|**b**| ' -> ['a', 'b']. An escaped pipe (\\|) does not split."""
+    return [clean_text(cell.replace("\\|", "|")) for cell in _cells_as_written(line)]
 
 
 def _is_separator_row(line: str) -> bool:
-    body = line.strip()
-    if not body.startswith("|"):
-        return False
-    cells = split_table_row(body)
-    return bool(cells) and all(_SEPARATOR_CELL_RE.fullmatch(cell) for cell in cells)
+    """True for a pipe line whose every cell, as written, is dashes with optional colons."""
+    return all(_SEPARATOR_CELL_RE.fullmatch(cell) for cell in _cells_as_written(line))
 
 
 def _continues_table(line: str) -> bool:
-    """True for a pipe line that holds no character other tools end a line at."""
+    """True for a pipe line with no character in its middle that other tools end a line at."""
     body = line.strip()
     return body.startswith("|") and len(body.splitlines()) == 1
 
 
 def _is_table(block: list[str]) -> bool:
-    """A header, then a separator row, and no separator row further down.
+    """A header, then a separator row, and no separator row anywhere else.
 
-    A second separator row can mean that two tables have run together, so the block
-    is not read as a table: nothing is guessed.
+    A separator row in another place can mean that two tables have run together or that
+    a header went missing, so the block is not read as a table: nothing is guessed.
     """
-    if len(block) < 2 or not _is_separator_row(block[1]):
-        return False
-    return not any(_is_separator_row(line) for line in block[2:])
+    return [index for index, line in enumerate(block) if _is_separator_row(line)] == [1]
 
 
 class _Builder:

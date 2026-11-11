@@ -150,6 +150,7 @@ def test_separator_rows(parse, separator):
         "|---|나|",  # one cell is not dashes
         "|---x|---|",  # dashes with something after them
         "||",  # no dashes at all
+        "|**---**|**---**|",  # dashes in bold: a separator cell is dashes as written
     ],
 )
 def test_a_second_line_that_is_not_a_separator_makes_no_table(parse, second_line):
@@ -211,3 +212,37 @@ def test_a_data_row_of_dashes_counts_as_a_second_separator(parse):
     elements, findings = parse("[PAGE 1]\n|가|나|\n|---|---|\n| - | - |")
     assert [element.kind for element in elements[1:]] == ["unclassified"] * 3
     assert [finding.code for finding in findings] == ["UNCLASSIFIED_LINE"] * 3
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        "|---|---|\n|---|---|\n|1|2|",  # the first line too
+        "| - | - |\n|---|---|\n|1|2|",  # a header of dashes
+        "|---|---|\n|1|2|",  # the first line only
+        "|가|나|\n|1|2|\n|---|---|",  # the third line only
+    ],
+)
+def test_a_separator_row_outside_the_second_line_leaves_the_block_unclassified(parse, block):
+    # a header may have gone missing: no line is taken for one
+    elements, findings = parse("[PAGE 1]\n" + block)
+    lines = block.split("\n")
+    assert [element.kind for element in elements[1:]] == ["unclassified"] * len(lines)
+    assert [element.text for element in elements[1:]] == lines
+    assert [finding.code for finding in findings] == ["UNCLASSIFIED_LINE"] * len(lines)
+
+
+def test_the_lines_after_a_header_that_was_left_out_are_not_read_as_a_table(parse):
+    # the header holds a form feed and is left out of the block, which then opens
+    # with the separator row: the row of dashes after it is not taken for a separator
+    text = "[PAGE 1]\n|가\x0c나|다|\n|---|---|\n| - | - |\n|1|2|"
+    elements, findings = parse(text)
+    assert [element.kind for element in elements[1:]] == ["unclassified"] * 4
+    assert [finding.line_start for finding in findings] == [2, 3, 4, 5]
+
+
+def test_a_data_row_of_dashes_in_bold_is_a_data_row(parse):
+    elements, findings = parse("[PAGE 1]\n|가|나|\n|---|---|\n|**-**|**-**|")
+    assert elements[1].kind == "table"
+    assert [cell.text for cell in elements[1].rows[0]] == ["-", "-"]
+    assert findings == ()

@@ -93,6 +93,7 @@
 - 정규화는 NFKC에 더해 NFKC가 바꾸지 않는 글자를 접는다: U+2010·U+2012·U+2013·U+2212(−) → `-`, U+301C(〜)·U+223C → `~`. U+2011은 NFKC가 U+2010으로 바꾼다. em dash(U+2014)는 접지 않는다(중국어는 문장 부호로 두 번 이어 쓴다).
 - 숫자(전각 포함) 바로 뒤에 온 위 첨자(`⁰`~`⁹`, `⁺`, `⁻`)와 위 첨자 숫자 바로 앞에 온 위 첨자 부호(`⁺`, `⁻`) 앞에는 NFKC 전에 `^`를 넣는다(`10³` → `10^3`, `10⁻³` → `10^-3`, `m⁻³` → `m^-3`). NFKC만 하면 `103`, `m-3`이 된다. 그 밖에 글자 뒤의 위 첨자와 아래 첨자는 그대로 붙인다(`cm²` → `cm2`, `CO₂` → `CO2`, `Na⁺` → `Na+`).
 - 숫자로 끝나는 코드 구간 바로 뒤의 단위도 읽는다(`A-5 kg` → `code:A-5`, `unit:kg`). 다음 낱말이 그 자체로 코드이면 읽지 않는다(`A1 L2`, `T1 L-204A`는 코드 둘이다).
+- 숫자가 없는 영문자 구간도 바로 뒤에 음수 지수(`^-숫자`)가 오면 지수와 함께 코드로 남긴다(`min⁻¹` → `code:min-1`). 남기지 않으면 `min⁻¹`과 `s⁻¹`이 같게 읽힌다. 지수의 부호와 숫자는 그 뒤에 따로 읽는다.
 - 글자나 숫자 뒤가 아닌 자리에서 숫자 바로 앞에 온 `.`은 숫자에 붙인다(`.5`). 이런 숫자는 어느 표기에도 맞지 않아 적힌 그대로 비교한다. `,`는 붙이지 않는다.
 - `ml`과 `l`은 단위 표의 `mL`과 `L`로 읽는다(`UNIT_SPELLINGS`). NFKC가 `㎖`를 `ml`로, `ℓ`를 `l`로 바꾼다.
 - 코드 구간은 ASCII 영문자에서 시작한다. `Bánh1`에서는 `nh1`이 코드로 나온다. 양쪽 문서에 같은 글자가 있으면 일치하고, 한쪽에만 있으면 불일치로 드러나므로 그대로 둔다.
@@ -4730,6 +4731,7 @@ def _others(text, language="ko"):
         ("Ca²⁺", "Ca2+"),
         ("m⁻³", "m^-3"),  # a sign right before a superscript digit is marked anywhere
         ("cm⁻¹", "cm^-1"),
+        ("℃⁻¹", "°C^-1"),  # after a unit that is not a letter too
         ("m⁺²", "m^+2"),
         ("Na⁺", "Na+"),  # no superscript digit after the sign: no mark
         ("A⁺⁻", "A+-"),
@@ -4861,8 +4863,8 @@ def test_a_superscript_after_a_letter_reads_like_the_plain_character(with_supers
     [
         ("입자 3520 m⁻³", ["3520", "3"], ["unit:m", "sym:neg"]),
         ("1000 cm⁻¹", ["1000", "1"], ["unit:cm", "sym:neg"]),
-        ("5 kg·m⁻²", ["5", "2"], ["unit:kg", "sym:neg"]),
-        ("조도 (W/m⁻²)", ["2"], ["sym:neg"]),
+        ("5 kg·m⁻²", ["5", "2"], ["unit:kg", "code:m-2", "sym:neg"]),
+        ("조도 (W/m⁻²)", ["2"], ["code:m-2", "sym:neg"]),
         ("5 m⁺²", ["5", "2"], ["unit:m"]),
         ("Na⁺ 5 mg", ["5"], ["unit:mg"]),  # a charge, not the sign of a number
     ],
@@ -4874,10 +4876,51 @@ def test_the_sign_of_a_superscript_number_after_a_letter_is_kept(text, numbers, 
 
 @pytest.mark.parametrize(
     "negative, positive",
-    [("3520 m⁻³", "3520 m³"), ("1000 cm⁻¹", "1000 cm¹"), ("5 m⁻²", "5 m⁺²")],
+    [
+        ("3520 m⁻³", "3520 m³"),
+        ("1000 cm⁻¹", "1000 cm¹"),
+        ("5 m⁻²", "5 m⁺²"),
+        ("5 ℃⁻¹", "5 ℃¹"),
+    ],
 )
 def test_a_negative_superscript_does_not_read_like_a_positive_one(negative, positive):
     assert extract_tokens(negative, "ko") != extract_tokens(positive, "ko")
+
+
+@pytest.mark.parametrize(
+    "text, numbers, others",
+    [
+        ("회전수 1500 min⁻¹", ["1500", "1"], ["code:min-1", "sym:neg"]),
+        ("1500 s⁻¹", ["1500", "1"], ["code:s-1", "sym:neg"]),
+        ("5 mg·L⁻¹", ["5", "1"], ["unit:mg", "code:L-1", "sym:neg"]),
+        ("파수 (cm⁻¹)", ["1"], ["code:cm-1", "sym:neg"]),
+        ("5 N-m⁻¹", ["5", "1"], ["code:N-m-1", "sym:neg"]),  # the whole run of letters
+        ("m⁻²³", ["23"], ["code:m-23", "sym:neg"]),  # every digit of the exponent
+        ("m^-2", ["2"], ["code:m-2", "sym:neg"]),  # written with the mark itself
+        ("A1b⁻²", ["2"], ["code:A1b", "sym:neg"]),  # a code already: no second one
+        ("m ⁻²", ["2"], ["sym:neg"]),  # the exponent is not right after the letters
+        ("m⁺²", ["2"], []),  # only a negative exponent
+        ("m^2", ["2"], []),
+        ("m^- 2", ["2"], []),  # no digit right after the sign
+    ],
+)
+def test_the_letters_before_a_negative_exponent_are_kept_as_a_code(text, numbers, others):
+    assert _numbers(text) == numbers
+    assert _others(text) == others
+
+
+@pytest.mark.parametrize(
+    "one, other",
+    [
+        ("회전수 1500 min⁻¹", "Speed 1500 s⁻¹"),
+        ("5 kg·m⁻²", "5 kg·cm⁻²"),
+        ("5 mg·L⁻¹", "5 mg·mL⁻¹"),
+        ("밀도 1.2 g·cm⁻³", "Density 1.2 g·m⁻³"),
+        ("파수 (cm⁻¹)", "Wavenumber (mm⁻¹)"),
+    ],
+)
+def test_other_letters_before_a_negative_exponent_do_not_read_alike(one, other):
+    assert extract_tokens(one, "ko") != extract_tokens(other, "ko")
 
 
 @pytest.mark.parametrize(
@@ -4993,6 +5036,7 @@ def test_scanning_goes_on_after_the_unit():
         ("C-500 mg-", ["code:C-500", "unit:mg"]),  # no digit in the run: still a unit
         ("A-5 mg-kg", ["code:A-5", "unit:mg"]),
         ("A-5 kg 와 B2", ["code:A-5", "unit:kg", "code:B2"]),  # a code further on
+        ("A-5 kg 10", ["code:A-5", "unit:kg"]),  # a number further on
         ("BK01 %5", ["code:BK01", "unit:%"]),  # a unit that is not a letter starts no code
         ("A-5 m⁻²", ["code:A-5", "unit:m", "sym:neg"]),
         ("CO2 5%", ["code:CO2", "unit:%"]),
@@ -5087,7 +5131,7 @@ E   ImportError: cannot import name 'UNIT_SPELLINGS' from 'app.parsing.tokens'
 - 단위 표 `UNITS`가 생긴다. 단위는 이 한 곳에만 둔다. `UNIT_SPELLINGS`는 표에 있는 단위의 다른 표기다(`ml` → `mL`, `l` → `L`).
 - `normalize()`가 생긴다. 숫자(전각 포함) 바로 뒤에 온 위 첨자와 위 첨자 숫자 바로 앞에 온 위 첨자 부호 앞에 `^`를 넣고(`10³` → `10^3`, `m⁻³` → `m^-3`) NFKC를 한 뒤, NFKC가 바꾸지 않는 글자를 접는다: U+2010·U+2012·U+2013·U+2212(−) → `-`, U+301C(〜)·U+223C → `~`. U+2011은 NFKC가 U+2010으로 바꾼다. em dash(U+2014)는 접지 않는다(중국어는 문장 부호로 두 번 이어 쓴다).
 - `NumberToken(raw, value)`와 `Tokens(numbers, others)`가 생긴다. `others`는 `unit:`, `sym:`, `code:`로 시작하는 문자열이다.
-- `extract_tokens(text, language)`가 생긴다. 정규화한 글을 왼쪽부터 한 번 훑는다. ASCII 영문자에서 시작하는 구간은 통째로 읽고 숫자가 들어 있으면 코드다. 그래서 `WI-BK-204`의 `204`는 숫자로 세지 않는다. 숫자는 바로 뒤의 단위와 함께 읽는다. 숫자로 끝나는 코드 구간 바로 뒤의 단위도 읽는데, 다음 낱말이 그 자체로 코드이면(공백 하나 뒤에서 영문자로 시작해 영문자·`_`·`-`만 거쳐 숫자에 닿으면) 읽지 않는다. 글자나 숫자 뒤가 아닌 자리에서 숫자 바로 앞에 온 `.`은 숫자에 붙인다(`.5`). `-`는 숫자나 그런 `.` 바로 앞에 있고 그 앞 글자가 ASCII 영문자나 숫자가 아닐 때 음수 부호다.
+- `extract_tokens(text, language)`가 생긴다. 정규화한 글을 왼쪽부터 한 번 훑는다. ASCII 영문자에서 시작하는 구간은 통째로 읽고 숫자가 들어 있으면 코드다. 그래서 `WI-BK-204`의 `204`는 숫자로 세지 않는다. 숫자가 없는 구간도 바로 뒤에 음수 지수(`^-숫자`)가 오면 지수와 함께 코드로 남긴다(`m⁻²` → `code:m-2`). 지수의 부호와 숫자는 그 뒤에 따로 읽는다. 숫자는 바로 뒤의 단위와 함께 읽는다. 숫자로 끝나는 코드 구간 바로 뒤의 단위도 읽는데, 다음 낱말이 그 자체로 코드이면(공백 하나 뒤에서 영문자로 시작해 영문자·`_`·`-`만 거쳐 숫자에 닿으면) 읽지 않는다. 글자나 숫자 뒤가 아닌 자리에서 숫자 바로 앞에 온 `.`은 숫자에 붙인다(`.5`). `-`는 숫자나 그런 `.` 바로 앞에 있고 그 앞 글자가 ASCII 영문자나 숫자가 아닐 때 음수 부호다.
 
 `app/parsing/tokens.py` 전체를 아래 내용으로 바꾼다:
 
@@ -5147,6 +5191,8 @@ _NUMBER_RE = re.compile(r"[0-9]+(?:[.,][0-9]+)*")
 _CODE_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
 # After a code: the next word is a code of its own (a run that holds a digit).
 _NEXT_CODE_RE = re.compile(r" [A-Za-z][A-Za-z_-]*[0-9]")
+# After letters: a negative exponent as normalize() writes it ('m⁻²' -> 'm^-2').
+_NEGATIVE_EXPONENT_RE = re.compile(r"\^-[0-9]+")
 _ASCII_LETTERS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 _ASCII_DIGITS = frozenset("0123456789")
 _ASCII_ALNUM = _ASCII_LETTERS | _ASCII_DIGITS
@@ -5251,6 +5297,12 @@ def extract_tokens(text: str, language: Language) -> Tokens:
             word = match.group().rstrip("-_")
             if any(letter in _ASCII_DIGITS for letter in word):
                 others.append("code:" + word)
+            else:
+                # 'kg·m⁻²': the letters before a negative exponent stay, as in 'm-2'. The
+                # sign and the number of the exponent are still read after this.
+                exponent = _NEGATIVE_EXPONENT_RE.match(scanned, match.end())
+                if exponent is not None:
+                    others.append("code:" + word + exponent.group()[1:])
             position = match.end()
             ends_in_digit = scanned[position - 1] in _ASCII_DIGITS
             if ends_in_digit and not _NEXT_CODE_RE.match(scanned, position):
@@ -5280,7 +5332,7 @@ def extract_tokens(text: str, language: Language) -> Tokens:
 
 Run: `.venv/Scripts/python -m pytest tests/parsing/test_tokens.py -q`
 
-Expected: 마지막 줄이 `243 passed`
+Expected: 마지막 줄이 `263 passed`
 
 - [ ] **Step 5: 전체 검사를 돌린다**
 
@@ -5290,7 +5342,7 @@ Expected: 마지막 줄이 `243 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `735 passed`, `All checks passed!`, `21 files already formatted`
+Expected: 차례로 `755 passed`, `All checks passed!`, `21 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -5496,6 +5548,8 @@ _NUMBER_RE = re.compile(r"[0-9]+(?:[.,][0-9]+)*")
 _CODE_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
 # After a code: the next word is a code of its own (a run that holds a digit).
 _NEXT_CODE_RE = re.compile(r" [A-Za-z][A-Za-z_-]*[0-9]")
+# After letters: a negative exponent as normalize() writes it ('m⁻²' -> 'm^-2').
+_NEGATIVE_EXPONENT_RE = re.compile(r"\^-[0-9]+")
 _ASCII_LETTERS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 _ASCII_DIGITS = frozenset("0123456789")
 _ASCII_ALNUM = _ASCII_LETTERS | _ASCII_DIGITS
@@ -5600,6 +5654,12 @@ def extract_tokens(text: str, language: Language) -> Tokens:
             word = match.group().rstrip("-_")
             if any(letter in _ASCII_DIGITS for letter in word):
                 others.append("code:" + word)
+            else:
+                # 'kg·m⁻²': the letters before a negative exponent stay, as in 'm-2'. The
+                # sign and the number of the exponent are still read after this.
+                exponent = _NEGATIVE_EXPONENT_RE.match(scanned, match.end())
+                if exponent is not None:
+                    others.append("code:" + word + exponent.group()[1:])
             position = match.end()
             ends_in_digit = scanned[position - 1] in _ASCII_DIGITS
             if ends_in_digit and not _NEXT_CODE_RE.match(scanned, position):
@@ -5710,7 +5770,7 @@ Expected: 마지막 줄이 `15 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `750 passed`, `All checks passed!`, `22 files already formatted`
+Expected: 차례로 `770 passed`, `All checks passed!`, `22 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6314,7 +6374,7 @@ Expected: 마지막 줄이 `22 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `772 passed`, `All checks passed!`, `24 files already formatted`
+Expected: 차례로 `792 passed`, `All checks passed!`, `24 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -6533,7 +6593,7 @@ Expected: 마지막 줄이 `24 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `796 passed`, `All checks passed!`, `25 files already formatted`
+Expected: 차례로 `816 passed`, `All checks passed!`, `25 files already formatted`
 
 - [ ] **Step 4: 커밋한다**
 
@@ -6758,7 +6818,7 @@ Expected: 마지막 줄이 `23 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `819 passed`, `All checks passed!`, `27 files already formatted`
+Expected: 차례로 `839 passed`, `All checks passed!`, `27 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -7221,7 +7281,7 @@ Expected: 마지막 줄이 `33 passed`
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `852 passed`, `All checks passed!`, `29 files already formatted`
+Expected: 차례로 `872 passed`, `All checks passed!`, `29 files already formatted`
 
 - [ ] **Step 6: 커밋한다**
 
@@ -7567,7 +7627,7 @@ Expected: 종료 코드 0, 출력은 아래와 같다.
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `870 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `890 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 11: 커밋한다**
 
@@ -7744,7 +7804,7 @@ python -m venv .venv
 .venv/Scripts/python -m ruff format --check .
 ```
 
-Expected: 차례로 `870 passed`, `All checks passed!`, `31 files already formatted`
+Expected: 차례로 `890 passed`, `All checks passed!`, `31 files already formatted`
 
 - [ ] **Step 5: 설계의 완료 기준을 하나씩 확인한다**
 

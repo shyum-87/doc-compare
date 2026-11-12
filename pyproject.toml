@@ -7,7 +7,7 @@ name = "doc-compare"
 version = "0.1.0"
 description = "Checklist-based document compliance checking (PoC)"
 requires-python = ">=3.10"
-dependencies = ["pydantic>=2.7,<3"]
+dependencies = ["pydantic>=2.7,<3", "openai>=3.49,<4"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]

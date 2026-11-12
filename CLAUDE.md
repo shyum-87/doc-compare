@@ -48,6 +48,18 @@ python -m venv .venv
 
 이 저장소는 Public이다. 사내 문서·SOP 원문, 사내 API 주소, credential ticket, 사용자 ID, 승인번호를 코드·커밋·로그·테스트 픽스처·보고서에 넣지 않는다. 테스트 데이터는 공개/가상 데이터만 `tests/fixtures/`에 둔다. 비밀값은 환경변수로만 읽고 `config/example.env`에는 자리표시자만 둔다.
 
+로그에는 발견 항목 코드, 요소 ID, 줄 번호, 개수만 남긴다. 예외는 타입만 기록하고 메시지는 남기지 않는다(메시지에 경로나 문서 본문이 들어갈 수 있다).
+
+## 현재 코드 구조 (단위 ①)
+
+흐름은 `app/parsing/ingest.py`의 `ingest()` 하나다. `reader.read_lines`(UTF-8, BOM 무시, sha256) → `line_parser.parse_lines`(줄 → 평평한 요소 목록 + 발견 항목) → `verify_line_coverage`(모든 줄이 어떤 요소에 들어갔는지 확인) → `Document` 순으로 진행된다. 번역본이면 원문(`rag.md`)도 같은 방식으로 읽은 뒤 `translation_check.check_translation`이 두 문서의 요소를 1:1로 짝짓고(D-008) 숫자·단위·코드 토큰을 비교한다(`tokens.py`). 마지막으로 `quality.decide_status`가 상태를 정한다.
+
+- 한국어 기준 문서(`original_language="ko"`)는 원문 없이 읽으며, 자기 자신이 `variant="source"`다. 번역본은 `"translated"`, 원문은 `"source"`다.
+- 입력 문제(읽기 실패, UTF-8 아님, 빈 문서)는 예외가 아니라 `Failure` → `FAILED`로 돌려준다. 그 밖의 예외는 바깥에서 잡아 `INTERNAL_ERROR`로 바꾼다. 호출자 실수(잘못된 언어, 한국어 문서에 원문 지정)만 `ValueError`로 올린다.
+- 발견 항목(`Finding`)은 `Document` 안에 넣지 않고 `element_id`로 요소를 가리킨다. 등급은 코드가 정한다(`findings.py`의 `INFO_CODES`, D-013). 새 코드를 만들면 `FindingCode` Literal에 추가하고, 문서 전체를 막는 코드라면 `DOCUMENT_SCOPE_CODES`에도 넣는다.
+- 상태는 비율로 정하지 않는다. "검토 필요" 항목이 하나라도 있으면 `REVIEW_REQUIRED`다. 이후 판정 단계는 `quality.blocked_element_ids`로 받은 요소를 PASS 근거로 쓰지 않는다.
+- 모델은 모두 `FrozenModel`(Pydantic, `frozen=True`, `extra="forbid"`)이고, 위치 정보는 `Locator`(페이지, 절 경로, 줄 범위)에 담는다. 명령줄 결과 JSON은 `findings.IngestResult`를 그대로 덤프한 것이다. 입력 `rag_ko.md`의 형식은 [docs/RAG_KO_FORMAT.md](docs/RAG_KO_FORMAT.md)에 있다. [docs/PARSER_OUTPUT.md](docs/PARSER_OUTPUT.md)는 상류 파서 JSON에 대한 참고 문서이며, 이 저장소는 그 JSON을 읽지 않는다.
+
 ## 아키텍처 (계획)
 
 파이프라인: Document Intelligence(파싱) → Structured Document Model + Provenance → Requirement Builder → Coverage Auditor → 사람 승인 → Requirement Registry → Compliance Validator(근거 검색 + Rule Engine + LLM Semantic Judge + Evidence Recheck) → 5상태 판정 → 보고서. Format Validator는 내용 검증과 별도 경로로 구조화 모델을 받아 보고서로 간다. "형식 불합격"과 "내용 불충분"은 서로 다른 결과로 관리한다.
@@ -58,7 +70,7 @@ Compliance Validator의 단계 순서(§3.4): Applicability 확인 → 근거 �
 
 PoC v0.1 스택: Python 3.10, 입력은 외부 변환 파이프라인이 만든 `rag_ko.md`(원본 → 파서 JSON → LLM 재구성 Markdown → 한국어 번역. 형식은 [docs/RAG_KO_FORMAT.md](docs/RAG_KO_FORMAT.md)). 이 저장소에는 그 파일을 구조화 모델로 읽는 어댑터만 두고 파서는 만들지 않는다. 사내 OpenAI 호환 LLM(OpenAI SDK 또는 LangChain ChatOpenAI), Python 함수형 파이프라인(LangGraph는 이후), Streamlit, FastAPI. Vector DB와 자율 Multi-Agent는 PoC에서 도입하지 않는다. 근거 검색은 초기에 직접 대조로 하고, 문서 1쌍으로 파싱·추출·매핑·판정을 검증한 뒤 RAG를 도입한다.
 
-평가는 `tests/evaluation/`의 판정 골든셋과 §10의 KPI로 한다. 단일 '정확도'로 판단하지 않으며, Critical 항목의 False Pass(실제 FAIL/MISSING을 PASS로 처리)를 가장 보수적으로 본다.
+평가는 `tests/evaluation/`(아직 없음)의 판정 골든셋과 §10의 KPI로 한다. 단일 '정확도'로 판단하지 않으며, Critical 항목의 False Pass(실제 FAIL/MISSING을 PASS로 처리)를 가장 보수적으로 본다.
 
 ## 반드시 지킬 설계 불변조건
 

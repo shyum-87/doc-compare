@@ -16,6 +16,8 @@
 .venv/Scripts/python -m ruff format .
 ```
 
+구현하면서 계획과 달라진 점: 주소가 `http(s)://`로 시작하지 않으면 `CONFIG_INVALID`로 본다. 스키마 검증은 엄격 모드로 한다. `httpx2`가 요청 주소를 로그에 남기는 것을 테스트가 잡아, SDK와 전송 계층의 로거를 껐다.
+
 ## SDK에서 확인한 동작
 
 구현 전에 `httpx2.MockTransport`로 확인했다. 분류 규칙은 이 동작에 맞춘다.
@@ -34,10 +36,10 @@
 
 **파일:** `pyproject.toml`, `constraints.txt`
 
-- [ ] `pyproject.toml`의 `dependencies`에 `"openai>=3.49,<4"`를 더한다.
-- [ ] `constraints.txt`에 `openai==3.49.0`, `httpx2==2.14.0`, `httpcore2==2.14.0`, `jiter==0.18.0`, `anyio==4.16.0`, `h11==0.16.0`, `idna==3.20`, `sniffio==1.3.1`, `truststore==0.10.5`를 더하고, 머리말에 `httpx2`, `httpcore2`, `jiter`를 최신이 아닌 버전으로 고정한 이유를 적는다.
-- [ ] `pip install -e ".[dev]" -c constraints.txt`가 끝나고 기존 테스트가 통과하는지 확인한다.
-- [ ] 커밋: `build: add the openai SDK and pin its dependencies`
+- [x] `pyproject.toml`의 `dependencies`에 `"openai>=3.49,<4"`를 더한다.
+- [x] `constraints.txt`에 `openai==3.49.0`, `httpx2==2.14.0`, `httpcore2==2.14.0`, `jiter==0.18.0`, `anyio==4.16.0`, `h11==0.16.0`, `idna==3.20`, `sniffio==1.3.1`, `truststore==0.10.5`를 더하고, 머리말에 `httpx2`, `httpcore2`, `jiter`를 최신이 아닌 버전으로 고정한 이유를 적는다.
+- [x] `pip install -e ".[dev]" -c constraints.txt`가 끝나고 기존 테스트가 통과하는지 확인한다.
+- [x] 커밋: `build: add the openai SDK and pin its dependencies`
 
 ## 작업 2. 결과 모델
 
@@ -65,10 +67,10 @@ class StructuredResult(FrozenModel, Generic[T]): status; value: Optional[T]; tex
 
 테스트:
 
-- [ ] `OK`인데 `text`가 없거나 `failure`가 있으면 만들어지지 않는다. `FAILED`인데 `text`나 `value`가 있거나 `failure`가 없어도 만들어지지 않는다.
-- [ ] 구조화 결과가 `OK`이면 `value`가 있어야 한다.
-- [ ] 모르는 역할과 모르는 실패 사유는 거부된다. 결과를 JSON으로 덤프했다가 다시 읽으면 같다.
-- [ ] 커밋: `feat: add the result models of an LLM call`
+- [x] `OK`인데 `text`가 없거나 `failure`가 있으면 만들어지지 않는다. `FAILED`인데 `text`나 `value`가 있거나 `failure`가 없어도 만들어지지 않는다.
+- [x] 구조화 결과가 `OK`이면 `value`가 있어야 한다.
+- [x] 모르는 역할과 모르는 실패 사유는 거부된다. 결과를 JSON으로 덤프했다가 다시 읽으면 같다.
+- [x] 커밋: `feat: add the result models of an LLM call`
 
 ## 작업 3. 설정
 
@@ -93,13 +95,13 @@ def read_env_file(path: Path) -> dict[str, str]
 
 테스트:
 
-- [ ] 값이 모두 있으면 설정이 만들어진다. 앞뒤 공백은 잘린다.
-- [ ] 필수 값이 없거나 공백뿐이면 `CONFIG_MISSING`이고 이름이 정해진 순서로 모두 나온다.
-- [ ] `DS_OPENAI_API_KEY`가 없으면 `placeholder`, 시간 제한이 없으면 60이다.
-- [ ] 시간 제한이 숫자가 아니거나 0 이하이거나 `nan`, `inf`이면 `CONFIG_INVALID`다.
-- [ ] `repr`과 `str`에 어떤 값도 나오지 않는다.
-- [ ] `read_env_file`: `KEY=VALUE`, 빈 줄, `#` 주석, 값의 양끝 따옴표, `=`가 든 값, BOM을 읽는다. `=`가 없는 줄은 건너뛴다.
-- [ ] 커밋: `feat: read the LLM settings from the environment`
+- [x] 값이 모두 있으면 설정이 만들어진다. 앞뒤 공백은 잘린다.
+- [x] 필수 값이 없거나 공백뿐이면 `CONFIG_MISSING`이고 이름이 정해진 순서로 모두 나온다.
+- [x] `DS_OPENAI_API_KEY`가 없으면 `placeholder`, 시간 제한이 없으면 60이다.
+- [x] 시간 제한이 숫자가 아니거나 0 이하이거나 `nan`, `inf`이면 `CONFIG_INVALID`다.
+- [x] `repr`과 `str`에 어떤 값도 나오지 않는다.
+- [x] `read_env_file`: `KEY=VALUE`, 빈 줄, `#` 주석, 값의 양끝 따옴표, `=`가 든 값, BOM을 읽는다. `=`가 없는 줄은 건너뛴다.
+- [x] 커밋: `feat: read the LLM settings from the environment`
 
 ## 작업 4. 구조화 응답 읽기
 
@@ -112,11 +114,11 @@ def parse_structured(text: str, schema: type[T]) -> Union[T, LLMFailureReason]
 
 테스트:
 
-- [ ] 지시 메시지에 스키마의 JSON Schema가 들어 있고, 같은 스키마에는 늘 같은 글이 나온다.
-- [ ] 객체 JSON은 스키마의 인스턴스로 읽힌다. 글 전체가 ```` ```json ```` 또는 ```` ``` ```` 울타리 하나로 싸여 있어도 읽힌다.
-- [ ] JSON 앞뒤에 다른 글이 있으면, 최상위가 배열·문자열·숫자이면, 울타리가 둘이면 `INVALID_JSON`이다.
-- [ ] 필드가 빠졌거나 타입이 다르면 `SCHEMA_MISMATCH`다.
-- [ ] 커밋: `feat: read a structured answer against a schema`
+- [x] 지시 메시지에 스키마의 JSON Schema가 들어 있고, 같은 스키마에는 늘 같은 글이 나온다.
+- [x] 객체 JSON은 스키마의 인스턴스로 읽힌다. 글 전체가 ```` ```json ```` 또는 ```` ``` ```` 울타리 하나로 싸여 있어도 읽힌다.
+- [x] JSON 앞뒤에 다른 글이 있으면, 최상위가 배열·문자열·숫자이면, 울타리가 둘이면 `INVALID_JSON`이다.
+- [x] 필드가 빠졌거나 타입이 다르면 `SCHEMA_MISMATCH`다.
+- [x] 커밋: `feat: read a structured answer against a schema`
 
 ## 작업 5. 공통 흐름과 가짜 LLM
 
@@ -146,14 +148,14 @@ class FakeLLM(BaseLLM):
 
 테스트:
 
-- [ ] 텍스트 호출이 응답 글과 기록(모델, 프롬프트 ID와 버전, 게이트웨이 버전, 시도 하나)을 돌려준다.
-- [ ] 실패 사유를 정해 두면 `FAILED`와 그 사유가 나오고 `text`는 없다.
-- [ ] 구조화 호출이 지시 메시지를 맨 뒤에 붙여 보내고 `value`와 `text`를 돌려준다.
-- [ ] 형식이 틀린 응답 뒤에 맞는 응답이 오면 `OK`이고 시도가 둘이다. 두 번 다 틀리면 `FAILED`이고 세 번째 호출은 없다.
-- [ ] 형식 실패가 아닌 실패(`AUTH_ERROR`)는 다시 호출하지 않는다.
-- [ ] 응답이 다 떨어지면, `_request`가 예외를 내면, `INTERNAL_ERROR`다. 예외는 밖으로 나오지 않는다.
-- [ ] 로그 한 줄에 프롬프트 ID, 상태, 사유, 시도 횟수가 있고 프롬프트와 응답 글은 없다.
-- [ ] 커밋: `feat: add the shared call flow and a fake LLM`
+- [x] 텍스트 호출이 응답 글과 기록(모델, 프롬프트 ID와 버전, 게이트웨이 버전, 시도 하나)을 돌려준다.
+- [x] 실패 사유를 정해 두면 `FAILED`와 그 사유가 나오고 `text`는 없다.
+- [x] 구조화 호출이 지시 메시지를 맨 뒤에 붙여 보내고 `value`와 `text`를 돌려준다.
+- [x] 형식이 틀린 응답 뒤에 맞는 응답이 오면 `OK`이고 시도가 둘이다. 두 번 다 틀리면 `FAILED`이고 세 번째 호출은 없다.
+- [x] 형식 실패가 아닌 실패(`AUTH_ERROR`)는 다시 호출하지 않는다.
+- [x] 응답이 다 떨어지면, `_request`가 예외를 내면, `INTERNAL_ERROR`다. 예외는 밖으로 나오지 않는다.
+- [x] 로그 한 줄에 프롬프트 ID, 상태, 사유, 시도 횟수가 있고 프롬프트와 응답 글은 없다.
+- [x] 커밋: `feat: add the shared call flow and a fake LLM`
 
 ## 작업 6. 게이트웨이
 
@@ -175,22 +177,22 @@ BACKOFF_SECONDS = (1.0, 2.0)
 
 테스트(`conftest.py`의 `make_gateway(handler)`가 `MockTransport`를 끼운 게이트웨이와 기다린 시간 목록을 준다):
 
-- [ ] 요청의 주소가 `<base>/chat/completions`이고 본문에 `model`, `messages`, `temperature: 0`이 있다. `max_tokens`는 줄 때만 있다.
-- [ ] 고정 헤더 4개의 값이 설정과 같고 `User-Type`은 `AD_ID`다.
-- [ ] `Prompt-Msg-Id`와 `Completion-Msg-Id`가 UUID이고, 서로 다르고, 호출마다 다르고, 기록의 값과 같다.
-- [ ] 정상 응답의 토큰 사용량이 기록에 들어간다. `usage`가 없으면 `None`이다.
-- [ ] 위 분류표의 경우마다 사유와 `http_status`가 맞다.
-- [ ] 재시도하는 사유는 세 번 시도하고 1초, 2초를 기다린다. 시도마다 UUID가 다르다. 두 번째에 성공하면 `OK`이고 시도가 둘이다.
-- [ ] 재시도하지 않는 사유는 한 번만 보낸다.
-- [ ] 설정이 없으면 `CONFIG_MISSING`이고 전송 계층이 한 번도 불리지 않는다. `OPENAI_BASE_URL`이 환경에 있어도 같다.
-- [ ] 전송 계층이 모르는 예외를 내면 `INTERNAL_ERROR`다.
-- [ ] 오류 응답의 본문, 주소, 인증값이 로그와 결과의 `repr`에 없다.
-- [ ] 구조화 호출이 실제 SDK 경로로 동작한다.
-- [ ] 커밋: `feat: call the in-house LLM through the openai SDK`
+- [x] 요청의 주소가 `<base>/chat/completions`이고 본문에 `model`, `messages`, `temperature: 0`이 있다. `max_tokens`는 줄 때만 있다.
+- [x] 고정 헤더 4개의 값이 설정과 같고 `User-Type`은 `AD_ID`다.
+- [x] `Prompt-Msg-Id`와 `Completion-Msg-Id`가 UUID이고, 서로 다르고, 호출마다 다르고, 기록의 값과 같다.
+- [x] 정상 응답의 토큰 사용량이 기록에 들어간다. `usage`가 없으면 `None`이다.
+- [x] 위 분류표의 경우마다 사유와 `http_status`가 맞다.
+- [x] 재시도하는 사유는 세 번 시도하고 1초, 2초를 기다린다. 시도마다 UUID가 다르다. 두 번째에 성공하면 `OK`이고 시도가 둘이다.
+- [x] 재시도하지 않는 사유는 한 번만 보낸다.
+- [x] 설정이 없으면 `CONFIG_MISSING`이고 전송 계층이 한 번도 불리지 않는다. `OPENAI_BASE_URL`이 환경에 있어도 같다.
+- [x] 전송 계층이 모르는 예외를 내면 `INTERNAL_ERROR`다.
+- [x] 오류 응답의 본문, 주소, 인증값이 로그와 결과의 `repr`에 없다.
+- [x] 구조화 호출이 실제 SDK 경로로 동작한다.
+- [x] 커밋: `feat: call the in-house LLM through the openai SDK`
 
 ## 작업 7. 연결 확인 명령
 
-**파일:** `app/llm/__main__.py`, `tests/llm/test_cli.py`
+**파일:** `app/llm/__main__.py`, `tests/llm/test_check_command.py`(`tests/parsing/test_cli.py`와 이름이 겹치지 않게 한다)
 
 ```python
 def main(argv=None, *, env=None, gateway_factory=LLMGateway.from_env) -> int
@@ -198,19 +200,19 @@ def main(argv=None, *, env=None, gateway_factory=LLMGateway.from_env) -> int
 
 테스트:
 
-- [ ] 두 호출이 모두 `OK`이면 종료 코드 0이고 화면에 `text call: OK`와 `structured call: OK` 줄이 나온다.
-- [ ] 하나라도 실패하면 2이고 사유와 `http` 상태가 나온다.
-- [ ] 설정이 없으면 2이고 빠진 변수의 이름이 나온다. 값은 나오지 않는다.
-- [ ] `--env-file`의 값이 쓰이고, 실제 환경변수가 파일보다 우선한다. 파일을 읽지 못하면 2다.
-- [ ] 화면에 응답 글, 주소, 인증값이 없다.
-- [ ] 커밋: `feat: add the connection check command`
+- [x] 두 호출이 모두 `OK`이면 종료 코드 0이고 화면에 `text call: OK`와 `structured call: OK` 줄이 나온다.
+- [x] 하나라도 실패하면 2이고 사유와 `http` 상태가 나온다.
+- [x] 설정이 없으면 2이고 빠진 변수의 이름이 나온다. 값은 나오지 않는다.
+- [x] `--env-file`의 값이 쓰이고, 실제 환경변수가 파일보다 우선한다. 파일을 읽지 못하면 2다.
+- [x] 화면에 응답 글, 주소, 인증값이 없다.
+- [x] 커밋: `feat: add the connection check command`
 
 ## 작업 8. 문서
 
-**파일:** `config/example.env`, `CLAUDE.md`, `README.md`, `docs/DECISIONS.md`, `docs/INHOUSE_CHECK.md`, `docs/INHOUSE_GUIDE.md`
+**파일:** `config/example.env`, `CLAUDE.md`, `README.md`, `docs/DECISIONS.md`, `docs/INHOUSE_LLM_CHECK.md`(새 문서), `docs/INHOUSE_CHECK.md`, `docs/INHOUSE_GUIDE.md`
 
-- [ ] `example.env`에 `DS_LLM_TIMEOUT_SECONDS`를 더한다.
-- [ ] `DECISIONS.md`에 D-015(OpenAI SDK와 단위 ②의 범위), D-016(호출은 결과 객체를 돌려주고 `FAILED`는 UNKNOWN으로 이어진다)을 더한다.
-- [ ] `CLAUDE.md`의 현재 상태, 명령어, 코드 구조를 고친다. `README.md`의 현재 단계를 고친다.
-- [ ] 사내 문서 두 개에 연결 확인 절차와 가지고 나올 것을 더한다.
-- [ ] 전체 테스트와 ruff를 돌린 뒤 커밋: `docs: describe unit 2 and its in-house check`
+- [x] `example.env`에 `DS_LLM_TIMEOUT_SECONDS`를 더한다.
+- [x] `DECISIONS.md`에 D-015(OpenAI SDK와 단위 ②의 범위), D-016(호출은 결과 객체를 돌려주고 `FAILED`는 UNKNOWN으로 이어진다)을 더한다.
+- [x] `CLAUDE.md`의 현재 상태, 명령어, 코드 구조를 고친다. `README.md`의 현재 단계를 고친다.
+- [x] 연결 확인 절차와 가지고 나올 것을 `INHOUSE_LLM_CHECK.md`에 쓰고, 사내 문서 두 개에서 그 문서를 가리킨다.
+- [x] 전체 테스트와 ruff를 돌린 뒤 커밋: `docs: describe unit 2 and its in-house check`

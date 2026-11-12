@@ -29,7 +29,7 @@
 ### 완료 기준
 
 - 테스트와 ruff가 통과한다. 테스트는 네트워크를 쓰지 않는다.
-- 어떤 입력과 어떤 응답에도 호출 함수에서 예외가 나오지 않는다.
+- 호출하는 동안 일어난 어떤 일에도 호출 함수에서 예외가 나오지 않는다. 호출자의 실수(메시지가 없다, 프롬프트 ID가 비었다, 스키마가 Pydantic 모델이 아니다)만 보내기 전에 `ValueError`나 `TypeError`로 올린다.
 - 로그와 결과 객체의 `repr`에 주소, 인증값, 사용자 ID, 프롬프트, 응답 본문이 나오지 않는다.
 
 ## 3. 설정
@@ -45,7 +45,7 @@
 | `DS_LLM_TIMEOUT_SECONDS` | 아니오 | 시도 한 번의 시간 제한. 없으면 60 |
 
 - 헤더 `User-Type`의 값은 `AD_ID`로 고정한다.
-- 값이 없거나 공백뿐이면 없는 것으로 본다. 필수 값이 없으면 `CONFIG_MISSING`, 시간 제한이 양수가 아니면 `CONFIG_INVALID`다.
+- 값이 없거나 공백뿐이면 없는 것으로 본다. 필수 값이 없으면 `CONFIG_MISSING`이다. 주소가 `http://`나 `https://`로 시작하지 않거나 시간 제한이 양수가 아니면 `CONFIG_INVALID`다.
 - **기본 주소는 없다.** 주소가 없으면 어디로도 보내지 않는다. SDK가 자기 환경변수(`OPENAI_BASE_URL` 등)로 주소를 정하는 일이 없도록 주소를 항상 직접 넘긴다.
 - 설정이 잘못되어도 게이트웨이를 만들 때 예외가 나지 않는다. 그 게이트웨이의 모든 호출이 `FAILED`를 돌려준다.
 - 설정 객체의 `repr`은 값을 보여 주지 않는다. 빠진 변수는 이름만 알려 준다.
@@ -69,7 +69,7 @@ result = gateway.complete_structured(messages, Schema, prompt_id=..., prompt_ver
 
 1. 호출자의 메시지 뒤에 지시 메시지 하나를 붙인다. "JSON 객체 하나만 답하라"는 문장과 스키마의 JSON Schema가 들어 있다.
 2. 응답 글을 JSON으로 읽는다. 글 전체가 코드 울타리(```` ``` ````) 하나로 싸여 있으면 울타리만 벗긴다. 글 속에서 `{`를 찾아 잘라 내는 식의 추측은 하지 않는다.
-3. 최상위가 객체가 아니거나 JSON이 아니면 `INVALID_JSON`, 스키마 검증에 실패하면 `SCHEMA_MISMATCH`다.
+3. 최상위가 객체가 아니거나 JSON이 아니면 `INVALID_JSON`, 스키마 검증에 실패하면 `SCHEMA_MISMATCH`다. 검증은 엄격하게 한다. 숫자 자리에 문자열 `"3"`이 오면 맞지 않는 것으로 본다.
 4. 이 둘은 같은 요청으로 한 번만 더 호출한다. 두 번째도 실패하면 `FAILED`다.
 
 SDK의 `response_format`은 쓰지 않는다. 사내 모델이 지원하는지 확인되지 않았다.
@@ -97,7 +97,7 @@ Attempt           prompt_msg_id, completion_msg_id, outcome, http_status, durati
 | 코드 | 뜻 | 재시도 |
 |---|---|---|
 | `CONFIG_MISSING` | 필수 환경변수가 없다 | 아니오 |
-| `CONFIG_INVALID` | 시간 제한 값이 잘못되었다 | 아니오 |
+| `CONFIG_INVALID` | 주소나 시간 제한 값이 잘못되었다 | 아니오 |
 | `TIMEOUT` | 시간 초과(HTTP 408 포함) | 예 |
 | `CONNECTION_ERROR` | 연결하지 못했다 | 예 |
 | `RATE_LIMITED` | HTTP 429 | 예 |
@@ -125,6 +125,8 @@ INFO app.llm.base: call checklist.extract: OK, attempts=1, 850 ms
 ERROR app.llm.base: call checklist.extract: FAILED AUTH_ERROR, attempts=1, 120 ms
 ```
 
+SDK의 전송 계층(`httpx2`)은 요청마다 주소 전체를 INFO로 남기고, SDK는 요청과 응답을 DEBUG로 남긴다. 게이트웨이는 `httpx2`, `httpcore2`, `openai` 로거를 꺼서 프로그램이 어떤 로그 수준을 정해도 이 줄들이 나오지 않게 한다.
+
 주소, 헤더 값, 사용자 ID, 모델 이름, 프롬프트, 응답 본문은 로그에 남기지 않는다. 예외는 타입과 이 저장소 파일의 위치만 남기고 메시지는 남기지 않는다. SDK 예외의 메시지에는 주소와 응답 본문이 들어갈 수 있다.
 
 ## 7. 가짜 LLM
@@ -140,9 +142,13 @@ python -m app.llm check [--env-file .env]
 문서와 무관한 고정 문장으로 텍스트 호출 한 번과 구조화 호출 한 번을 한다. 화면(stderr)에는 아래 꼴의 줄만 나온다.
 
 ```text
+INFO app.llm.base: call llm.check.text: OK, attempts=1, 850 ms
 INFO app.llm: text call: OK, attempts=1, 850 ms, usage=yes
+INFO app.llm.base: call llm.check.structured: OK, attempts=1, 910 ms
 INFO app.llm: structured call: OK, attempts=1, 910 ms, usage=yes
 ```
+
+`app.llm.base`의 줄은 6절의 호출 로그다.
 
 ```text
 ERROR app.llm: configuration: CONFIG_MISSING: DS_CREDENTIAL, DS_USER_ID
@@ -171,7 +177,7 @@ app/llm/__main__.py   연결 확인 명령
 
 `openai` 3.49.0(Apache-2.0)을 쓴다. Python 3.10에서 설치되는 하위 의존성은 `httpx2` 2.14.0, `httpcore2` 2.14.0(BSD-3-Clause), `jiter` 0.18.0, `anyio`, `h11`, `truststore`(MIT), `idna`(BSD-3-Clause), `sniffio`(MIT 또는 Apache-2.0)다. `httpx2`, `httpcore2`, `jiter`의 최신 버전은 Python 3.11 이상만 지원하므로 위 버전으로 고정한다. 모두 `constraints.txt`에 적는다.
 
-이 목록은 pip에 Python 3.10을 대상으로 지정해 얻은 것이다. 실제 Python 3.10에서 설치해 보지는 않았다.
+이 목록은 pip에 Python 3.10을 대상으로 지정해 얻은 것이다. 실제 Python 3.10에서 설치해 보지는 않았다. 테스트는 Python 3.14에서 위 버전으로 돌렸다.
 
 ## 11. 테스트
 
@@ -182,7 +188,7 @@ app/llm/__main__.py   연결 확인 명령
 
 ### 사내 확인
 
-`python -m app.llm check`를 실행하고 화면의 줄과 종료 코드만 가지고 나온다. 절차는 구현 뒤 [INHOUSE_CHECK.md](../../INHOUSE_CHECK.md)와 [INHOUSE_GUIDE.md](../../INHOUSE_GUIDE.md)에 더한다.
+`python -m app.llm check`를 실행하고 화면의 줄과 종료 코드만 가지고 나온다. 절차는 [INHOUSE_LLM_CHECK.md](../../INHOUSE_LLM_CHECK.md)에 있다.
 
 ## 12. 미결
 

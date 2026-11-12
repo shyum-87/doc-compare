@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 현재 상태
 
-단위 ①(기반 + `rag_ko.md` 어댑터)이 구현되어 있다. `rag_ko.md`와 `rag.md`를 요소 목록으로 읽고, 번역본 점검과 품질 점검을 한다. 단위 ②~⑥(LLM 게이트웨이, 체크리스트 추출, 판정, UI, 서식 검사)은 아직 없다. 전체 설계는 [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md)에 있으며, 다음 단위를 구현할 때는 이 문서의 §11(권장 파일 구성)과 §9(PoC 단계)를 따른다.
+단위 ①(기반 + `rag_ko.md` 어댑터)과 단위 ②(LLM 게이트웨이)가 구현되어 있다. 단위 ①은 `rag_ko.md`와 `rag.md`를 요소 목록으로 읽고, 번역본 점검과 품질 점검을 한다. 단위 ②는 사내 OpenAI 호환 LLM을 호출하는 통로이며, 실제 사내 연동은 아직 확인하지 않았다. 단위 ③~⑥(체크리스트 추출, 판정, UI, 서식 검사)은 아직 없다. 전체 설계는 [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md)에 있으며, 다음 단위를 구현할 때는 이 문서의 §11(권장 파일 구성)과 §9(PoC 단계)를 따른다.
 
 목표: DOCX/PDF 문서의 양식·필수 항목 검증(Use Case A)과 한국 기준 SOP ↔ 일본 SOP 비교(Use Case B).
 
-단위별 설계(D-001의 6개 단위)는 `docs/superpowers/specs/`에 있다. 단위 ①은 [2026-11-11-foundation-rag-adapter-design.md](docs/superpowers/specs/2026-11-11-foundation-rag-adapter-design.md)다. 단위별 구현 계획은 `docs/superpowers/plans/`에 있다. 단위 ①은 [2026-11-11-foundation-rag-adapter.md](docs/superpowers/plans/2026-11-11-foundation-rag-adapter.md)다.
+단위별 설계(D-001의 6개 단위)는 `docs/superpowers/specs/`에 있다. 단위 ①은 [2026-11-11-foundation-rag-adapter-design.md](docs/superpowers/specs/2026-11-11-foundation-rag-adapter-design.md), 단위 ②는 [2026-11-12-llm-gateway-design.md](docs/superpowers/specs/2026-11-12-llm-gateway-design.md)다. 단위별 구현 계획은 `docs/superpowers/plans/`에 있다. 단위 ①은 [2026-11-11-foundation-rag-adapter.md](docs/superpowers/plans/2026-11-11-foundation-rag-adapter.md), 단위 ②는 [2026-11-12-llm-gateway.md](docs/superpowers/plans/2026-11-12-llm-gateway.md)다.
 
 설계 문서 이후 확정된 결정은 [docs/DECISIONS.md](docs/DECISIONS.md)에 있으며, 설계 문서와 다르면 그쪽이 우선한다. 새 결정이 나오면 거기에 추가한다.
 
@@ -34,14 +34,19 @@ python -m venv .venv
 
 # 문서 한 건 읽기(번역본 + 원문). 한국어 기준 문서는 --original-language ko, --source 없이.
 .venv/Scripts/python -m app.parsing tests/fixtures/rag_ko/sample_bakery_sop.md --doc-id SOP-SAMPLE --version 1 --original-language vi --source tests/fixtures/rag/sample_bakery_sop.vi.md --out out/sample.json
+
+# 사내 LLM 연결 확인(사내에서만 의미가 있다). 종료 코드는 두 호출이 모두 OK이면 0, 아니면 2.
+.venv/Scripts/python -m app.llm check --env-file .env
 ```
 
 - 명령줄 종료 코드는 `OK` 0, `REVIEW_REQUIRED` 1, `FAILED`와 사용법 오류 2다. 결과 파일을 쓰지 못했거나 예상하지 못한 오류가 나도 2다. 0과 1은 결과 파일을 쓴 뒤에만 나온다.
 - 결과 JSON에는 문서 본문이 들어간다. `out/` 아래에만 쓰고 커밋하지 않는다.
 - 파싱 규칙이나 토큰 규칙을 바꾸면 `app/parsing/ingest.py`의 `PARSER_VERSION`을 올린다.
+- 게이트웨이의 규칙(지시 메시지, 재시도, 실패 분류)을 바꾸면 `app/llm/base.py`의 `GATEWAY_VERSION`을 올린다.
 - `tests/fixtures/`의 샘플과 테스트의 기준값은 고치지 않는다. 테스트가 실패하면 코드를 고친다.
 - 사내 실행 환경은 Python 3.10.11이다(D-003). 3.10 뒤에 생긴 문법과 표준 라이브러리 기능을 쓰지 않는다. ruff의 `target-version = "py310"`이 일부를 잡아 준다.
 - 의존성 버전은 `constraints.txt`에 고정한다. 버전을 올릴 때는 Python 3.10 지원과 라이선스를 다시 확인한다(D-009).
+- 사내에서 LLM 연결을 확인하는 절차는 [docs/INHOUSE_LLM_CHECK.md](docs/INHOUSE_LLM_CHECK.md)에 있다.
 - 사내에서 실제 파일로 확인하는 절차는 [docs/INHOUSE_CHECK.md](docs/INHOUSE_CHECK.md)에, 저장소를 받은 뒤의 전체 순서는 [docs/INHOUSE_GUIDE.md](docs/INHOUSE_GUIDE.md)에 있다.
 
 ## 보안 (공개 저장소)
@@ -59,6 +64,25 @@ python -m venv .venv
 - 발견 항목(`Finding`)은 `Document` 안에 넣지 않고 `element_id`로 요소를 가리킨다. 등급은 코드가 정한다(`findings.py`의 `INFO_CODES`, D-013). 새 코드를 만들면 `FindingCode` Literal에 추가하고, 문서 전체를 막는 코드라면 `DOCUMENT_SCOPE_CODES`에도 넣는다.
 - 상태는 비율로 정하지 않는다. "검토 필요" 항목이 하나라도 있으면 `REVIEW_REQUIRED`다. 이후 판정 단계는 `quality.blocked_element_ids`로 받은 요소를 PASS 근거로 쓰지 않는다.
 - 모델은 모두 `FrozenModel`(Pydantic, `frozen=True`, `extra="forbid"`)이고, 위치 정보는 `Locator`(페이지, 절 경로, 줄 범위)에 담는다. 명령줄 결과 JSON은 `findings.IngestResult`를 그대로 덤프한 것이다. 입력 `rag_ko.md`의 형식은 [docs/RAG_KO_FORMAT.md](docs/RAG_KO_FORMAT.md)에 있다. [docs/PARSER_OUTPUT.md](docs/PARSER_OUTPUT.md)는 상류 파서 JSON에 대한 참고 문서이며, 이 저장소는 그 JSON을 읽지 않는다.
+
+## 현재 코드 구조 (단위 ②)
+
+LLM을 부르는 코드는 `app/llm/`의 게이트웨이만 쓴다. `openai` SDK는 `app/llm/gateway.py` 안에서만 가져온다(D-015).
+
+```python
+gateway = LLMGateway.from_env()
+result = gateway.complete(messages, prompt_id="...", prompt_version="1")
+result = gateway.complete_structured(messages, Schema, prompt_id="...", prompt_version="1")
+```
+
+- 공통 흐름은 `base.py`의 `BaseLLM`에 있다. 하위 클래스는 요청 한 번을 보내는 `_request`만 구현한다. `gateway.py`의 `LLMGateway`(SDK 호출)와 `fake.py`의 `FakeLLM`(정해 둔 응답)이 그 둘이다. LLM에 의존하는 코드의 테스트는 `FakeLLM`을 쓴다(D-002).
+- 호출은 예외를 올리지 않고 `TextResult` 또는 `StructuredResult`를 돌려준다(D-016). `status`가 `FAILED`이면 응답 내용이 없고 `failure`에 사유 코드가 있다. 호출자는 `FAILED`를 UNKNOWN으로 이어야 한다. 호출자 실수(메시지 없음, 빈 프롬프트 ID)만 `ValueError`로 올린다.
+- 설정이 없거나 틀려도 게이트웨이는 만들어지고, 모든 호출이 `CONFIG_MISSING`이나 `CONFIG_INVALID`로 실패한다. 기본 주소는 없다.
+- 재시도는 게이트웨이가 직접 한다(SDK의 재시도는 끈다). 시도마다 `Prompt-Msg-Id`와 `Completion-Msg-Id`가 새 UUID여야 하기 때문이다.
+- 구조화 호출은 `structured.py`가 지시 메시지를 붙이고 응답을 JSON으로 읽어 스키마로 엄격하게 검증한다. 스키마 통과는 형식만 보증한다.
+- 결과의 `record`(`CallRecord`)에 모델, 프롬프트 ID와 버전, 게이트웨이 버전, 시도별 UUID가 들어 있다. 판정을 저장할 때 함께 저장한다.
+- `gateway.py`는 `httpx2`, `httpcore2`, `openai` 로거를 끈다. 이 로거들은 요청 주소와 본문을 남긴다. 다시 켜지 않는다.
+- 테스트는 `tests/llm/conftest.py`의 `make_gateway`로 SDK에 `httpx2.MockTransport`를 끼워 네트워크 없이 실제 SDK 경로를 지난다.
 
 ## 아키텍처 (계획)
 
@@ -93,4 +117,4 @@ SYSTEM_DESIGN.md §5의 저장소들은 검토 후보일 뿐 도입이 확정된
 
 ## 사내 LLM 연동
 
-OpenAI 호환 API를 쓰는 공통 adapter를 `app/llm/`에 둔다. 설정은 환경변수 `DS_API_BASE_URL`, `DS_CREDENTIAL`, `DS_SYSTEM_NAME`, `DS_USER_ID`, `DS_LLM_MODEL`, `DS_OPENAI_API_KEY`에서 읽는다. 헤더 `x-dep-ticket`, `Send-System-Name`, `User-Id`, `User-Type`(값 `AD_ID`)을 붙이고, `Prompt-Msg-Id`와 `Completion-Msg-Id`는 **호출마다 새 UUID**를 발급한다. 골격 코드는 SYSTEM_DESIGN.md §6에 있다.
+OpenAI 호환 API를 쓰는 공통 adapter는 `app/llm/`에 구현되어 있다. 설정은 환경변수 `DS_API_BASE_URL`, `DS_CREDENTIAL`, `DS_SYSTEM_NAME`, `DS_USER_ID`, `DS_LLM_MODEL`, `DS_OPENAI_API_KEY`에서 읽는다. 헤더 `x-dep-ticket`, `Send-System-Name`, `User-Id`, `User-Type`(값 `AD_ID`)을 붙이고, `Prompt-Msg-Id`와 `Completion-Msg-Id`는 **호출마다 새 UUID**를 발급한다. `DS_OPENAI_API_KEY`는 선택이고, 시간 제한은 `DS_LLM_TIMEOUT_SECONDS`(선택, 기본 60초)로 바꾼다. 처음의 골격 코드는 SYSTEM_DESIGN.md §6에 있다.
